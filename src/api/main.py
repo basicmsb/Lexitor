@@ -1,0 +1,30 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.utils.config import settings
+
+app = FastAPI(
+    title="Lexitor API",
+    description="AI asistent za usklađenost dokumentacije javne nabave",
+    version="0.0.1",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.api_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health", tags=["health"])
+async def health() -> dict[str, str]:
+    return {"status": "ok", "env": settings.app_env}
+
+
+@app.get("/", tags=["health"])
+async def root() -> dict[str, str]:
+    return {"name": "Lexitor", "version": "0.0.1"}

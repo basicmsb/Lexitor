@@ -1,0 +1,58 @@
+# =====================================================
+# Lexitor - lokalni dev servisi
+# =====================================================
+# Pokreni:  docker compose up -d
+# Stop:     docker compose down
+# Reset:    docker compose down -v
+# =====================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lexitor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lexitor
+      POSTGRES_PASSWORD: lexitor
+      POSTGRES_DB: lexitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - lexitor_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexitor -d lexitor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: lexitor-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - lexitor_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: lexitor-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - lexitor_qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+
+volumes:
+  lexitor_postgres_data:
+  lexitor_redis_data:
+  lexitor_qdrant_data:

@@ -1,0 +1,153 @@
+[tool.poetry]
+name = "lexitor"
+version = "0.0.1"
+description = "AI asistent za usklađenost dokumentacije javne nabave"
+authors = ["Marko Bašić <marko.basic@arhigon.com>"]
+license = "Proprietary"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+# Web / API
+fastapi = "^0.110"
+uvicorn = {extras = ["standard"], version = "^0.27"}
+pydantic = "^2.6"
+pydantic-settings = "^2.2"
+python-multipart = "^0.0.9"
+httpx = "^0.27"
+
+# AI / LLM
+anthropic = "^0.20"
+cohere = "^5.0"
+langchain = "^0.1"
+langchain-anthropic = "^0.1"
+langchain-community = "^0.0.30"
+
+# Vector DB
+qdrant-client = "^1.8"
+
+# RDBMS
+psycopg = {extras = ["binary", "pool"], version = "^3.1"}
+sqlalchemy = {extras = ["asyncio"], version = "^2.0"}
+alembic = "^1.13"
+
+# Async jobs
+celery = "^5.3"
+redis = "^5.0"
+
+# Document parsing
+pdfplumber = "^0.10"
+python-docx = "^1.1"
+openpyxl = "^3.1"
+
+# UI (MVP)
+streamlit = "^1.30"
+
+# Utils
+python-dotenv = "^1.0"
+structlog = "^24.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-asyncio = "^0.23"
+pytest-cov = "^4.1"
+ruff = "^0.3"
+mypy = "^1.8"
+pre-commit = "^3.6"
+types-redis = "^4.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# =====================================================
+# Ruff (lint + format)
+# =====================================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "N",             # pep8-naming
+    "ASYNC",         # async best practices
+    "S",             # bandit (security)
+    "RUF",           # ruff-specific
+]
+ignore = [
+    "E501",  # line too long (formatter handles)
+    "S101",  # assert (tests use it)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "N"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# =====================================================
+# Mypy
+# =====================================================
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "pdfplumber.*",
+    "qdrant_client.*",
+    "cohere.*",
+    "langchain.*",
+    "langchain_community.*",
+    "celery.*",
+]
+ignore_missing_imports = true
+
+# =====================================================
+# Pytest
+# =====================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: brzi izolirani testovi",
+    "integration: testovi s pravom bazom / servisima",
+    "e2e: end-to-end testovi cijelog tijeka",
+    "slow: testovi koji traju dugo",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/db/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
