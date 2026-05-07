@@ -484,13 +484,13 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
         </header>
 
         {title && (
-          <h2 className="font-display text-2xl text-ink leading-snug mb-3">
+          <h2 className="font-display text-2xl text-ink leading-snug mb-3 max-w-prose">
             {title}
           </h2>
         )}
 
         {cleanText && (
-          <p className="text-sm text-navy leading-relaxed whitespace-pre-line">
+          <p className="text-sm text-navy leading-relaxed whitespace-pre-line max-w-prose">
             <HighlightedText
               text={cleanText}
               highlights={adjustedHighlights}
