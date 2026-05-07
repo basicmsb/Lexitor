@@ -473,9 +473,9 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     .filter((h) => h.start >= 0 && h.end <= cleanText.length);
 
   return (
-    <div className="space-y-4">
-      {/* TOP — STAVKA: contents from the troskovnik itself */}
-      <section className="rounded-lg border border-brand-border bg-white p-6">
+    <div className="grid gap-4 lg:grid-cols-3 items-start">
+      {/* LEFT (2/3) — STAVKA: contents from the troskovnik itself */}
+      <section className="rounded-lg border border-brand-border bg-white p-6 lg:col-span-2">
         <header className="flex items-start justify-between gap-4 mb-3">
           <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
             Stavka
@@ -569,9 +569,9 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
         )}
       </section>
 
-      {/* BOTTOM — ANALIZA: lexitor commentary, status accent on the left */}
+      {/* RIGHT (1/3) — ANALIZA: lexitor commentary, status accent on the left */}
       <section
-        className="rounded-lg border border-brand-border bg-white p-6 border-l-4"
+        className="rounded-lg border border-brand-border bg-white p-6 border-l-4 lg:col-span-1"
         style={{ borderLeftColor: accent }}
       >
         <header className="flex items-start justify-between gap-4 mb-4">
