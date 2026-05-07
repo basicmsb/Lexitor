@@ -152,17 +152,51 @@ async def _build_citations(
     return [dict(_PLACEHOLDER_ZJN)]
 
 
-def _explanation_for(status: AnalysisItemStatus) -> tuple[str | None, str | None]:
+def _explanation_for(
+    status: AnalysisItemStatus,
+    item_text: str = "",
+) -> tuple[str | None, str | None] | None:
+    """Pick a mock explanation/suggestion pair appropriate to `status`.
+
+    Returns None when the random pick is incompatible with the actual
+    text (e.g. a "brand mentioned" reason was chosen but no brand name
+    or brand-locking phrase is present). The caller should treat that
+    as "no real finding — downgrade to OK" rather than fabricating a
+    proizvođač that isn't in the document."""
     if status == AnalysisItemStatus.OK:
         return None, None
-    if status == AnalysisItemStatus.FAIL:
-        return random.choice(_FAIL_REASONS)
-    if status == AnalysisItemStatus.WARN:
-        return random.choice(_WARN_REASONS)
-    return (
-        "Stavku treba dodatno provjeriti — nije moguće sa sigurnošću utvrditi usklađenost.",
-        None,
-    )
+    if status == AnalysisItemStatus.UNCERTAIN:
+        return (
+            "Stavku treba dodatno provjeriti — nije moguće sa sigurnošću utvrditi usklađenost.",
+            None,
+        )
+    pool = _FAIL_REASONS if status == AnalysisItemStatus.FAIL else _WARN_REASONS
+    explanation, suggestion = random.choice(pool)
+    if _is_brand_reason(explanation) and not _text_has_brand_signal(item_text):
+        # Random picker hallucinated a manufacturer that isn't in the
+        # text. Refuse to lie — caller will downgrade this item to OK.
+        return None
+    return explanation, suggestion
+
+
+_BRAND_REASON_RE = re.compile(
+    r"proizvođač|proizvoda(č)?|jedinstvenog\s+proizvođača|sužava\s+krug",
+    re.IGNORECASE,
+)
+
+
+def _is_brand_reason(explanation: str) -> bool:
+    return bool(_BRAND_REASON_RE.search(explanation))
+
+
+def _text_has_brand_signal(item_text: str) -> bool:
+    if not item_text:
+        return False
+    if _BRAND_RE.search(item_text):
+        return True
+    if _PHRASE_RE.search(item_text):
+        return True
+    return False
 
 
 def _has_more_than_two_decimals(value: Any) -> bool:
@@ -184,6 +218,73 @@ def _format_eur(value: Any) -> str:
     except (TypeError, ValueError):
         return str(value)
     return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " EUR"
+
+
+def _detect_group_sum_issues(
+    parsed_metadata: dict[str, Any] | None,
+) -> tuple[list[str], list[str], AnalysisItemStatus] | None:
+    """Validate a group_sum item against the math rows it should aggregate.
+
+    Returns (problems, suggestions, status) when issues are found, or
+    None when the sum is complete and well-formed. Status is FAIL when
+    the formula is missing entirely (hardcoded value), WARN when the
+    SUM omits some math rows that fall in its range. Hierarchical
+    rollups (sums-of-sums) are evaluated against the transitive leaf
+    coverage so a correctly-rolled sum doesn't false-positive."""
+    if not parsed_metadata or parsed_metadata.get("kind") != "group_sum":
+        return None
+
+    formula = parsed_metadata.get("formula")
+    missing_rows: list[dict[str, Any]] = parsed_metadata.get("missing_rows") or []
+    in_range: list[dict[str, Any]] = parsed_metadata.get("math_rows_in_range") or []
+    is_rollup = bool(parsed_metadata.get("is_rollup"))
+
+    problems: list[str] = []
+    suggestions: list[str] = []
+    status = AnalysisItemStatus.OK
+
+    if not formula:
+        problems.append(
+            "U ćeliji UKUPNO nema SUM formule — iznos je upisan ručno, "
+            "pa ne pratimo izvor zbroja."
+        )
+        suggestions.append(
+            "Zamijeniti hardkodirani iznos formulom =SUM(...) koja pokriva sve "
+            "stavke ove grupe."
+        )
+        status = AnalysisItemStatus.FAIL
+        return problems, suggestions, status
+
+    if missing_rows:
+        rows_text = ", ".join(
+            f"red {mr['row']}" + (f" ({mr['block_title']})" if mr.get("block_title") else "")
+            for mr in missing_rows[:8]
+        )
+        more = "" if len(missing_rows) <= 8 else f" (+{len(missing_rows) - 8} dalje)"
+        kind_word = "rollup-suma" if is_rollup else "Formula =SUM(...)"
+        problems.append(
+            f"{kind_word} ne pokriva {len(missing_rows)} matematičkih "
+            f"redova koji upadaju u njezin raspon: {rows_text}{more}."
+        )
+        suggestions.append(
+            "Proširiti SUM tako da uključi sve stavke (ili sve podgrupe) "
+            "u rasponu — provjeriti i podgrupne UKUPNO retke ako postoje."
+        )
+        status = AnalysisItemStatus.WARN
+
+    if not in_range:
+        problems.append(
+            "SUM formula referencira retke koji nisu prepoznati kao stavke "
+            "(prazni redovi ili pomoćne ćelije)."
+        )
+        suggestions.append(
+            "Provjeriti raspon SUM-a — vjerojatno pokazuje na pogrešne ćelije."
+        )
+        status = AnalysisItemStatus.WARN
+
+    if not problems:
+        return None
+    return problems, suggestions, status
 
 
 def _detect_arithmetic_issues(
@@ -368,7 +469,15 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
         for index, parsed_item in enumerate(parsed.items):
             await asyncio.sleep(random.uniform(0.15, 0.45))
             status = _pick_status()
-            explanation, suggestion = _explanation_for(status)
+            picked = _explanation_for(status, parsed_item.text)
+            if picked is None:
+                # Random reason was incompatible with the text (e.g. "brand
+                # named" pick on text with no brand). Downgrade to OK rather
+                # than fabricate a proizvođač that isn't there.
+                status = AnalysisItemStatus.OK
+                explanation, suggestion = None, None
+            else:
+                explanation, suggestion = picked
             citations = await _build_citations(status, parsed_item.text)
             highlights = _build_highlights(parsed_item.text, status)
 
@@ -384,6 +493,33 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
                 )
                 suggestion = " ".join(fix_suggestions)
                 citations = [dict(_PLACEHOLDER_ZJN)]
+
+            # Group-sum validation: SUM formula must exist and cover all
+            # math rows in its range. Drives status for kind="group_sum".
+            group_sum = _detect_group_sum_issues(parsed_item.metadata)
+            if group_sum is not None:
+                gs_problems, gs_suggestions, gs_status = group_sum
+                status = gs_status
+                explanation = "Provjera UKUPNO retka:\n" + "\n".join(
+                    f"• {p}" for p in gs_problems
+                )
+                suggestion = " ".join(gs_suggestions)
+                citations = [dict(_PLACEHOLDER_ZJN)]
+                highlights = []
+            elif (
+                parsed_item.metadata
+                and parsed_item.metadata.get("kind") == "group_sum"
+            ):
+                # Group sum without issues — explicit OK with a friendly note.
+                status = AnalysisItemStatus.OK
+                explanation = (
+                    f"SUM formula uredno pokriva svih "
+                    f"{len(parsed_item.metadata.get('math_rows_in_range') or [])} "
+                    f"matematičkih redova u rasponu."
+                )
+                suggestion = None
+                citations = []
+                highlights = []
             stored, stored_citations = await _persist_item(
                 session,
                 analysis_id=analysis_id,
