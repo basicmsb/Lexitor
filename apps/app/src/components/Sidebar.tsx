@@ -1,4 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+import { useAuth } from "@/contexts/auth-context";
 
 const navigation = [
   { href: "/dashboard", label: "Naslovna" },
@@ -11,27 +16,59 @@ const navigation = [
 ] as const;
 
 export function Sidebar() {
+  const pathname = usePathname();
+  const { me, logout } = useAuth();
+
   return (
-    <aside className="w-64 shrink-0 border-r border-slate-200 bg-white min-h-screen">
+    <aside className="w-64 shrink-0 border-r border-slate-200 bg-white min-h-screen flex flex-col">
       <div className="px-6 py-5 border-b border-slate-200">
         <Link href="/dashboard" className="font-serif text-2xl font-semibold tracking-tight">
           Lexitor
         </Link>
+        {me?.project && (
+          <p className="text-xs text-slate-500 mt-1 truncate">{me.project.name}</p>
+        )}
       </div>
-      <nav className="p-3">
+
+      <nav className="p-3 flex-1">
         <ul className="space-y-1">
-          {navigation.map((item) => (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className="block px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-slate-100"
-              >
-                {item.label}
-              </Link>
-            </li>
-          ))}
+          {navigation.map((item) => {
+            const active = pathname?.startsWith(item.href);
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={`block px-3 py-2 rounded-md text-sm ${
+                    active
+                      ? "bg-brand-50 text-brand-900 font-medium"
+                      : "text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       </nav>
+
+      <div className="p-3 border-t border-slate-200">
+        {me?.user && (
+          <div className="px-3 py-2 mb-2">
+            <p className="text-sm font-medium text-slate-900 truncate">
+              {me.user.full_name ?? me.user.email}
+            </p>
+            <p className="text-xs text-slate-500 truncate">{me.user.email}</p>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={logout}
+          className="block w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-slate-100"
+        >
+          Odjavi se
+        </button>
+      </div>
     </aside>
   );
 }

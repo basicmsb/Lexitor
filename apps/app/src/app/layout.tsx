@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Source_Serif_4, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/contexts/auth-context";
 
 const sans = Inter({
   subsets: ["latin", "latin-ext"],
@@ -40,7 +41,9 @@ export default function RootLayout({
       lang="hr"
       className={`${sans.variable} ${serif.variable} ${mono.variable}`}
     >
-      <body className="font-sans antialiased bg-slate-50">{children}</body>
+      <body className="font-sans antialiased bg-slate-50">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }
