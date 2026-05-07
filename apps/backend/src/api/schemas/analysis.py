@@ -20,6 +20,15 @@ class CitationPublic(BaseModel):
     url: str | None
 
 
+class HighlightSpan(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    start: int
+    end: int
+    label: str
+    kind: str = "match"
+
+
 class AnalysisItemPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -31,6 +40,7 @@ class AnalysisItemPublic(BaseModel):
     explanation: str | None
     suggestion: str | None
     metadata_json: dict[str, Any] | None
+    highlights: list[HighlightSpan] | None = None
     citations: list[CitationPublic]
 
 

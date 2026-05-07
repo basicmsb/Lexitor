@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import uuid
 from typing import Any
 
@@ -72,6 +73,55 @@ def _pick_status() -> AnalysisItemStatus:
     return AnalysisItemStatus.OK
 
 
+_BRANDS = (
+    # HVAC
+    "Daikin", "Mitsubishi", "Toshiba", "Fujitsu", "Carrier", "Trane",
+    "Helios", "Halton", "Systemair", "Vortice",
+    # Sanitarna / armature
+    "Geberit", "Grohe", "Hansgrohe", "Kludi", "Roca",
+    # Odvodnja / cijevi
+    "Aco", "Pipelife", "Wavin", "Rehau",
+    # Građevinski
+    "Knauf", "Sika", "Mapei", "Promat", "Ytong", "Wienerberger", "Roefix",
+    "Baumit", "Velux", "Fibran", "Ursa", "Rockwool",
+    # Elektro
+    "Hilti", "Schneider", "Siemens", "ABB", "Hager", "Legrand", "Schiedel",
+    # Premazi i alati
+    "JUB", "Caparol", "Tikkurila", "Bosch", "Hilti",
+)
+_BRAND_RE = re.compile(
+    r"\b(" + "|".join(re.escape(b) for b in _BRANDS) + r")\b",
+    re.IGNORECASE,
+)
+# Phrases that signal brand-locked specifications even without naming
+# the brand directly — analyzer flags the surrounding context.
+_PHRASE_RE = re.compile(
+    r"(?i)\b(?:proizvod(?:a)?\s+(?:tipa|kao)|tipa\s+kao|kao\s+npr\.?)\s+([\w\sčćžšđČĆŽŠĐ]{2,40}?)(?=[,.;:!?\n]|$)",
+)
+
+
+def _build_highlights(item_text: str, item_status: AnalysisItemStatus) -> list[dict[str, Any]]:
+    if item_status == AnalysisItemStatus.OK:
+        return []
+    spans: list[dict[str, Any]] = []
+    for m in _BRAND_RE.finditer(item_text):
+        spans.append(
+            {"start": m.start(), "end": m.end(), "label": "brand bez 'ili jednakovrijedno'", "kind": "brand"}
+        )
+    for m in _PHRASE_RE.finditer(item_text):
+        spans.append(
+            {"start": m.start(), "end": m.end(), "label": "marka navedena bez 'ili jednakovrijedno'", "kind": "phrase"}
+        )
+    # De-duplicate overlaps (keep earliest start, longest end)
+    spans.sort(key=lambda s: (s["start"], -s["end"]))
+    merged: list[dict[str, Any]] = []
+    for s in spans:
+        if merged and s["start"] < merged[-1]["end"]:
+            continue
+        merged.append(s)
+    return merged
+
+
 _PLACEHOLDER_ZJN = {
     "source": CitationSource.ZJN,
     "reference": "Članak 207. ZJN",
@@ -125,6 +175,7 @@ def _serialize_item(item: AnalysisItem, citations: list[Citation]) -> dict[str, 
         "explanation": item.explanation,
         "suggestion": item.suggestion,
         "metadata_json": item.metadata_json,
+        "highlights": item.highlights,
         "citations": [
             {
                 "id": str(c.id),
@@ -147,6 +198,7 @@ async def _persist_item(
     explanation: str | None,
     suggestion: str | None,
     citations: list[dict[str, Any]],
+    highlights: list[dict[str, Any]],
 ) -> tuple[AnalysisItem, list[Citation]]:
     item = AnalysisItem(
         analysis_id=analysis_id,
@@ -157,6 +209,7 @@ async def _persist_item(
         explanation=explanation,
         suggestion=suggestion,
         metadata_json=parsed.metadata or None,
+        highlights=highlights or None,
     )
     session.add(item)
     await session.flush()
@@ -224,6 +277,7 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             status = _pick_status()
             explanation, suggestion = _explanation_for(status)
             citations = await _build_citations(status, parsed_item.text)
+            highlights = _build_highlights(parsed_item.text, status)
             stored, stored_citations = await _persist_item(
                 session,
                 analysis_id=analysis_id,
@@ -232,6 +286,7 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
                 explanation=explanation,
                 suggestion=suggestion,
                 citations=citations,
+                highlights=highlights,
             )
             summary[status.value] = summary.get(status.value, 0) + 1
             analysis.progress_percent = int(((index + 1) / max(total, 1)) * 100)

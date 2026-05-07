@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { HighlightedText } from "@/components/HighlightedText";
 import { StatusDot, statusAccent, statusLabel } from "@/components/StatusBadge";
 import type {
   AnalysisItemPublic,
@@ -403,12 +404,36 @@ function splitLabel(label: string | null): { rb: string | null; title: string | 
   return { rb: label.slice(0, idx), title: label.slice(idx + 3) };
 }
 
-const GOLD = "#B8893E";
+interface MathRow {
+  row?: number;
+  jm?: string | null;
+  kol?: number | string | null;
+  cijena?: number | string | null;
+  iznos?: number | string | null;
+  iznos_is_formula?: boolean;
+}
+
+function getMathRows(item: AnalysisItemPublic): MathRow[] {
+  const meta = item.metadata_json as Record<string, unknown> | null | undefined;
+  const rows = meta?.math_rows;
+  if (!Array.isArray(rows)) return [];
+  return rows as MathRow[];
+}
+
+function formatNumber(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "number" ? value : Number(value);
+  if (Number.isFinite(n)) {
+    return new Intl.NumberFormat("hr-HR", { maximumFractionDigits: 2 }).format(n);
+  }
+  return String(value);
+}
 
 function ItemDetail({ item }: { item: AnalysisItemPublic }) {
   const accent = statusAccent(item.status);
   const label = statusLabel(item.status);
   const { rb, title } = splitLabel(item.label);
+  const mathRows = getMathRows(item);
 
   // Body text shown in the callout. If the title is repeated as the first
   // line of `text`, drop it so we don't show the same string twice.
@@ -421,110 +446,169 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     return item.text;
   })();
 
+  // Translate highlight offsets when we trimmed the title prefix
+  const trimOffset = item.text.length - cleanText.length;
+  const adjustedHighlights = item.highlights
+    ?.map((h) => ({ ...h, start: h.start - trimOffset, end: h.end - trimOffset }))
+    .filter((h) => h.start >= 0 && h.end <= cleanText.length);
+
   return (
-    <article
-      className="border-l-4 pl-6 -ml-2"
-      style={{ borderColor: accent }}
-    >
-      <header className="flex items-start justify-between gap-4 mb-3">
-        <span
-          className="inline-flex items-center gap-2 text-xs uppercase tracking-wider font-medium"
-          style={{ color: accent }}
-        >
-          <span
-            aria-hidden
-            className="w-2 h-2 rounded-full"
-            style={{ backgroundColor: accent }}
-          />
-          {label}
-        </span>
-        {rb && (
-          <span className="text-sm text-muted font-mono">Stavka {rb}</span>
+    <div className="space-y-4">
+      {/* TOP — STAVKA: contents from the troskovnik itself */}
+      <section className="rounded-lg border border-brand-border bg-white p-6">
+        <header className="flex items-start justify-between gap-4 mb-3">
+          <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
+            Stavka
+          </span>
+          {rb && <span className="text-sm text-muted font-mono">{rb}</span>}
+        </header>
+
+        {title && (
+          <h2 className="font-display text-2xl text-ink leading-snug mb-3">
+            {title}
+          </h2>
         )}
-      </header>
 
-      {title && (
-        <h2 className="font-display text-2xl text-ink leading-snug mb-5">
-          {title}
-        </h2>
-      )}
+        {cleanText && (
+          <p className="text-sm text-navy leading-relaxed whitespace-pre-line">
+            <HighlightedText
+              text={cleanText}
+              highlights={adjustedHighlights}
+              accent={accent}
+            />
+          </p>
+        )}
 
-      {cleanText && (
-        <blockquote
-          className="border-l-2 bg-surface-2/60 pl-4 pr-3 py-3 mb-6 italic text-navy text-sm leading-relaxed whitespace-pre-line"
-          style={{ borderColor: GOLD }}
-        >
-          „{cleanText}”
-        </blockquote>
-      )}
+        {mathRows.length > 0 && (
+          <div className="mt-5 overflow-x-auto">
+            <table className="text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wider text-muted">
+                  <th className="pr-4 py-1 text-left font-medium">Jed.mjere</th>
+                  <th className="pr-4 py-1 text-right font-medium">Količina</th>
+                  <th className="pr-4 py-1 text-right font-medium">Jed. cijena</th>
+                  <th className="pr-4 py-1 text-right font-medium">Iznos</th>
+                  <th className="py-1 text-left font-medium">Formula</th>
+                </tr>
+              </thead>
+              <tbody className="text-navy font-mono">
+                {mathRows.map((row, idx) => (
+                  <tr key={idx} className="border-t border-brand-border">
+                    <td className="pr-4 py-1.5">{row.jm || "—"}</td>
+                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.kol)}</td>
+                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.cijena)}</td>
+                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.iznos)}</td>
+                    <td className="py-1.5">
+                      {row.iznos_is_formula ? (
+                        <span className="text-status-ok text-xs">✓ formula</span>
+                      ) : (
+                        <span className="text-[#A87F2E] text-xs">⚠ hardkodirano</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-      {item.explanation && (
-        <Section accent={accent} title="Zašto">
-          {item.explanation}
-        </Section>
-      )}
+      {/* BOTTOM — ANALIZA: lexitor commentary, status accent on the left */}
+      <section
+        className="rounded-lg border border-brand-border bg-white p-6 border-l-4"
+        style={{ borderLeftColor: accent }}
+      >
+        <header className="flex items-start justify-between gap-4 mb-4">
+          <span
+            className="inline-flex items-center gap-2 text-xs uppercase tracking-wider font-semibold"
+            style={{ color: accent }}
+          >
+            <span
+              aria-hidden
+              className="w-2 h-2 rounded-full"
+              style={{ backgroundColor: accent }}
+            />
+            {label}
+          </span>
+          <span className="text-[11px] uppercase tracking-[0.18em] font-medium text-muted">
+            Lexitor analiza
+          </span>
+        </header>
 
-      {item.suggestion && (
-        <Section accent={accent} title="Predloženi ispravak">
-          {item.suggestion}
-        </Section>
-      )}
+        {item.explanation && (
+          <Section accent={accent} title="Zašto">
+            {item.explanation}
+          </Section>
+        )}
 
-      {item.citations.length > 0 && (
-        <>
-          <hr className="my-5 border-brand-border" />
-          <ul className="space-y-1 text-xs font-mono text-muted">
-            {item.citations.map((c) => (
-              <li key={c.id}>
-                <span className="text-navy">
-                  {SOURCE_LABEL[c.source] ?? c.source.toUpperCase()} {c.reference}
-                </span>
-                {c.url && (
-                  <>
-                    {" · "}
-                    <a
-                      href={c.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-signal hover:underline"
-                    >
-                      otvori izvor
-                    </a>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+        {item.suggestion && (
+          <Section accent={accent} title="Predloženi ispravak">
+            {item.suggestion}
+          </Section>
+        )}
 
-      <div className="mt-6 pt-4 border-t border-brand-border flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Ispravi
-        </button>
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Prihvati rizik
-        </button>
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Označi kao false positive
-        </button>
-      </div>
-    </article>
+        {!item.explanation && !item.suggestion && (
+          <p className="text-sm text-muted italic">
+            Sustav nije našao problem u ovoj stavci.
+          </p>
+        )}
+
+        {item.citations.length > 0 && (
+          <>
+            <hr className="my-5 border-brand-border" />
+            <ul className="space-y-1 text-xs font-mono text-muted">
+              {item.citations.map((c) => (
+                <li key={c.id}>
+                  <span className="text-navy">
+                    {SOURCE_LABEL[c.source] ?? c.source.toUpperCase()} {c.reference}
+                  </span>
+                  {c.url && (
+                    <>
+                      {" · "}
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-signal hover:underline"
+                      >
+                        otvori izvor
+                      </a>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        <div className="mt-6 pt-4 border-t border-brand-border flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
+            title="Implementacija u Sprintu 2"
+          >
+            Ispravi
+          </button>
+          <button
+            type="button"
+            disabled
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
+            title="Implementacija u Sprintu 2"
+          >
+            Prihvati rizik
+          </button>
+          <button
+            type="button"
+            disabled
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
+            title="Implementacija u Sprintu 2"
+          >
+            Označi kao false positive
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

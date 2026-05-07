@@ -88,6 +88,7 @@ class AnalysisItem(Base, TimestampMixin):
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    highlights: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     analysis: Mapped[Analysis] = relationship(back_populates="items")
     citations: Mapped[list[Citation]] = relationship(
