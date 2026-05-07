@@ -260,15 +260,14 @@ class _Block:
         cijena_value = _value(row, mapping.cijena)
         is_formula = bool(iznos_cell and iznos_cell.data_type == "f")
         raw_iznos = iznos_cell.value if iznos_cell is not None else None
-        # When the iznos cell is empty but količina + cijena are both
-        # numeric, compute the total ourselves so the user always sees
-        # one. Mark it as "computed" so the UI can label it.
+        # Always compute the total when both količina and jed.cijena are
+        # numeric, so the UI can compare it to the Excel iznos and flag
+        # discrepancies (Tier 1.4 — manipulacija jediničnim cijenama).
         computed_iznos: float | None = None
-        if (raw_iznos in (None, "")) and not is_formula:
-            kol_num = _num(kol_value)
-            cijena_num = _num(cijena_value)
-            if kol_num is not None and cijena_num is not None:
-                computed_iznos = round(kol_num * cijena_num, 2)
+        kol_num = _num(kol_value)
+        cijena_num = _num(cijena_value)
+        if kol_num is not None and cijena_num is not None:
+            computed_iznos = round(kol_num * cijena_num, 2)
         self.math_rows.append(
             {
                 "row": row_index,

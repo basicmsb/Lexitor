@@ -445,6 +445,54 @@ function formatNumber(value: unknown): string {
   return String(value);
 }
 
+function toNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const s = String(value).replace(",", ".").trim();
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ProvjeraCell({
+  isFormula,
+  excel,
+  computed,
+  hasExcelValue,
+}: {
+  isFormula: boolean;
+  excel: number | null;
+  computed: number | null;
+  hasExcelValue: boolean;
+}) {
+  if (isFormula) {
+    return <span className="text-[#3F7D45] text-xs">✓ formula</span>;
+  }
+  if (computed === null) {
+    return <span className="text-muted text-xs">—</span>;
+  }
+  if (!hasExcelValue) {
+    return (
+      <span
+        className="text-xs text-muted"
+        title="Iznos računa Lexitor (kol × cijena) — Excel ćelija prazna"
+      >
+        ∑ {formatNumber(computed)}
+      </span>
+    );
+  }
+  if (excel !== null && excel === computed) {
+    return <span className="text-[#3F7D45] text-xs">✓ točno</span>;
+  }
+  return (
+    <span
+      className="text-[#A8392B] text-xs font-medium"
+      title={`Excel: ${formatNumber(excel)} · Lexitor: ${formatNumber(computed)}`}
+    >
+      ✗ {formatNumber(computed)}
+    </span>
+  );
+}
+
 function ItemDetail({ item }: { item: AnalysisItemPublic }) {
   const accent = statusAccent(item.status);
   const label = statusLabel(item.status);
@@ -516,13 +564,12 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
               </thead>
               <tbody className="text-navy font-mono">
                 {mathRows.map((row, idx) => {
-                  const computed = row.computed_iznos;
-                  const displayed =
-                    row.iznos !== null && row.iznos !== undefined && row.iznos !== ""
-                      ? formatNumber(row.iznos)
-                      : computed !== null && computed !== undefined
-                        ? formatNumber(computed)
-                        : "—";
+                  const computed = row.computed_iznos ?? null;
+                  const excelNum = toNumber(row.iznos);
+                  const hasExcelValue =
+                    row.iznos !== null && row.iznos !== undefined && row.iznos !== "";
+                  const displayedExcel = hasExcelValue ? formatNumber(row.iznos) : "—";
+                  const isExcelMissing = !hasExcelValue && computed !== null;
                   return (
                     <tr key={idx} className="border-t border-brand-border">
                       {hasPositions && (
@@ -537,28 +584,18 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
                       <td className="pr-4 py-1.5 text-right">{formatNumber(row.cijena)}</td>
                       <td
                         className={`pr-4 py-1.5 text-right ${
-                          computed !== null && computed !== undefined
-                            ? "italic text-muted"
-                            : ""
+                          isExcelMissing ? "italic text-muted" : ""
                         }`}
-                        title={
-                          computed !== null && computed !== undefined
-                            ? "Iznos računa Lexitor (kol × cijena) — ćelija nije popunjena"
-                            : undefined
-                        }
                       >
-                        {displayed}
+                        {isExcelMissing ? formatNumber(computed) : displayedExcel}
                       </td>
                       <td className="py-1.5">
-                        {row.iznos_is_formula ? (
-                          <span className="text-[#3F7D45] text-xs">✓ formula</span>
-                        ) : computed !== null && computed !== undefined ? (
-                          <span className="text-muted text-xs">∑ Lexitor</span>
-                        ) : row.iznos !== null && row.iznos !== undefined && row.iznos !== "" ? (
-                          <span className="text-[#A87F2E] text-xs">⚠ hardkodirano</span>
-                        ) : (
-                          <span className="text-muted text-xs">—</span>
-                        )}
+                        <ProvjeraCell
+                          isFormula={!!row.iznos_is_formula}
+                          excel={excelNum}
+                          computed={computed}
+                          hasExcelValue={hasExcelValue}
+                        />
                       </td>
                     </tr>
                   );
