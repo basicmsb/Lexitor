@@ -165,6 +165,99 @@ def _explanation_for(status: AnalysisItemStatus) -> tuple[str | None, str | None
     )
 
 
+def _has_more_than_two_decimals(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return False
+    cents = n * 100
+    return abs(round(cents) - cents) > 0.005
+
+
+def _format_eur(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " EUR"
+
+
+def _detect_arithmetic_issues(
+    parsed_metadata: dict[str, Any] | None,
+) -> tuple[list[str], list[str]] | None:
+    """Walk math_rows and surface mismatches / over-precise totals.
+
+    Returns (problems, suggestions) when any deterministic issue exists,
+    or None when the rows look clean. The caller upgrades the item's
+    status to FAIL and shows these strings on the analysis card."""
+    if not parsed_metadata:
+        return None
+    rows = parsed_metadata.get("math_rows") or []
+    if not rows:
+        return None
+
+    problems: list[str] = []
+    suggestions: set[str] = set()
+
+    for idx, row in enumerate(rows):
+        excel = row.get("iznos")
+        computed = row.get("computed_iznos")
+        is_formula = bool(row.get("iznos_is_formula"))
+        position = row.get("position_label")
+        prefix = f"„{position}”" if position else f"red {idx + 1}"
+
+        excel_num: float | None
+        try:
+            excel_num = float(excel) if excel not in (None, "") else None
+        except (TypeError, ValueError):
+            excel_num = None
+
+        computed_num: float | None
+        try:
+            computed_num = float(computed) if computed not in (None, "") else None
+        except (TypeError, ValueError):
+            computed_num = None
+
+        # Mismatch — Excel and Lexitor disagree (formula path is trusted)
+        if (
+            not is_formula
+            and excel_num is not None
+            and computed_num is not None
+            and excel_num != computed_num
+        ):
+            delta = round(excel_num - computed_num, 2)
+            problems.append(
+                f"{prefix}: deklarirani iznos {_format_eur(excel_num)} ne odgovara "
+                f"umnošku količine i jed. cijene ({_format_eur(computed_num)}). "
+                f"Razlika {_format_eur(delta)}."
+            )
+            suggestions.add("Provjeriti formulu u stupcu Iznos i uskladiti deklarirani iznos s količinom × jediničnom cijenom.")
+            continue
+
+        # Over-precise total (>2 decimals) even when the values agree
+        precision_value: float | None = None
+        if excel_num is not None and _has_more_than_two_decimals(excel_num):
+            precision_value = excel_num
+        elif computed_num is not None and _has_more_than_two_decimals(computed_num):
+            precision_value = computed_num
+        if precision_value is not None:
+            problems.append(
+                f"{prefix}: iznos {precision_value} sadrži više od 2 decimale. "
+                f"Novčani iznosi u EUR moraju biti zaokruženi na 2 decimale."
+            )
+            suggestions.add(
+                "Zaokružiti jediničnu cijenu i iznos na 2 decimale; provjeriti zaokruživanja u formuli."
+            )
+
+    if not problems:
+        return None
+    return problems, sorted(suggestions)
+
+
 def _serialize_item(item: AnalysisItem, citations: list[Citation]) -> dict[str, Any]:
     return {
         "id": str(item.id),
@@ -278,6 +371,19 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             explanation, suggestion = _explanation_for(status)
             citations = await _build_citations(status, parsed_item.text)
             highlights = _build_highlights(parsed_item.text, status)
+
+            # Deterministic override: if the parser flagged any
+            # arithmetic issue on this item, force FAIL + show the
+            # actual problem instead of the random mock reasons.
+            arithmetic = _detect_arithmetic_issues(parsed_item.metadata)
+            if arithmetic is not None:
+                problems, fix_suggestions = arithmetic
+                status = AnalysisItemStatus.FAIL
+                explanation = "Računska greška u stavci:\n" + "\n".join(
+                    f"• {p}" for p in problems
+                )
+                suggestion = " ".join(fix_suggestions)
+                citations = [dict(_PLACEHOLDER_ZJN)]
             stored, stored_citations = await _persist_item(
                 session,
                 analysis_id=analysis_id,

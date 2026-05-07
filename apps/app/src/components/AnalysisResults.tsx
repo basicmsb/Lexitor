@@ -440,7 +440,21 @@ function formatNumber(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   const n = typeof value === "number" ? value : Number(value);
   if (Number.isFinite(n)) {
-    return new Intl.NumberFormat("hr-HR", { maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat("hr-HR", { maximumFractionDigits: 4 }).format(n);
+  }
+  return String(value);
+}
+
+/** Always renders with 2 decimals — used for monetary columns where
+ *  "7.074" alone is ambiguous (looks like 7,074 in en-US convention). */
+function formatCurrency(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "number" ? value : Number(value);
+  if (Number.isFinite(n)) {
+    return new Intl.NumberFormat("hr-HR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
   }
   return String(value);
 }
@@ -485,9 +499,9 @@ function ProvjeraCell({
     return (
       <span
         className="text-[#A8392B] text-xs font-medium"
-        title={`Excel: ${formatNumber(excel)} · Lexitor: ${formatNumber(computed)}`}
+        title={`Excel: ${formatCurrency(excel)} · Lexitor: ${formatCurrency(computed)}`}
       >
-        ✗ {formatNumber(computed)}
+        ✗ {formatCurrency(computed)}
       </span>
     );
   }
@@ -520,7 +534,7 @@ function ProvjeraCell({
         className="text-xs text-muted"
         title="Iznos računa Lexitor (kol × cijena) — Excel ćelija prazna"
       >
-        ∑ {formatNumber(computed)}
+        ∑ {formatCurrency(computed)}
       </span>
     );
   }
@@ -602,7 +616,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
                   const excelNum = toNumber(row.iznos);
                   const hasExcelValue =
                     row.iznos !== null && row.iznos !== undefined && row.iznos !== "";
-                  const displayedExcel = hasExcelValue ? formatNumber(row.iznos) : "—";
+                  const displayedExcel = hasExcelValue ? formatCurrency(row.iznos) : "—";
                   const isExcelMissing = !hasExcelValue && computed !== null;
                   return (
                     <tr key={idx} className="border-t border-brand-border">
@@ -615,13 +629,13 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
                       )}
                       <td className="pr-4 py-1.5">{row.jm || "—"}</td>
                       <td className="pr-4 py-1.5 text-right">{formatNumber(row.kol)}</td>
-                      <td className="pr-4 py-1.5 text-right">{formatNumber(row.cijena)}</td>
+                      <td className="pr-4 py-1.5 text-right">{formatCurrency(row.cijena)}</td>
                       <td
                         className={`pr-4 py-1.5 text-right ${
                           isExcelMissing ? "italic text-muted" : ""
                         }`}
                       >
-                        {isExcelMissing ? formatNumber(computed) : displayedExcel}
+                        {isExcelMissing ? formatCurrency(computed) : displayedExcel}
                       </td>
                       <td className="py-1.5">
                         <ProvjeraCell
