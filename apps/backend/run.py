@@ -16,10 +16,14 @@ if sys.platform == "win32":
 import uvicorn  # noqa: E402
 
 if __name__ == "__main__":
+    # Reload is intentionally OFF: it kills `asyncio.create_task(...)`
+    # background workers (mock analyzer, etc.) every time a Python file
+    # changes, which corrupts in-flight analyses. Restart the server
+    # manually after backend edits during dev.
     uvicorn.run(
         "src.api.main:app",
         host="127.0.0.1",
         port=8000,
-        reload=True,
+        reload=False,
         loop="asyncio",
     )

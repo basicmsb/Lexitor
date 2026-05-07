@@ -89,36 +89,17 @@ async def _build_citations(
 ) -> list[dict[str, Any]]:
     """Build citations for a flagged item.
 
-    For FAIL/WARN/UNCERTAIN we run a semantic search against indexed DKOM
-    decisions and return up to 2 hits + the placeholder ZJN reference.
-    If the knowledge base is empty or unreachable, we degrade gracefully
-    to the placeholder only.
+    Cohere trial key is exhausted (1000 calls/month) — RAG retrieval is
+    temporarily disabled so the analyzer doesn't stall ~138s per item on
+    rate-limit retries. We fall back to the placeholder ZJN reference;
+    real DKOM citations come back when we move to a paid key or run with
+    Anthropic Citations.
     """
     if item_status == AnalysisItemStatus.OK:
         return []
-
-    samples: list[dict[str, Any]] = [dict(_PLACEHOLDER_ZJN)]
-
-    try:
-        hits = await knowledge_search(item_text, limit=2)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Knowledge search failed, using placeholder citation: %s", exc)
-        return samples
-
-    for hit in hits:
-        snippet = hit.text.strip().replace("\n", " ")
-        if len(snippet) > 320:
-            snippet = snippet[:317] + "…"
-        samples.append(
-            {
-                "source": CitationSource.DKOM,
-                "reference": f"DKOM, KLASA: {hit.klasa}",
-                "snippet": snippet,
-                "url": hit.pdf_url,
-            }
-        )
-
-    return samples
+    # item_text retained in signature for future RAG re-enable
+    _ = item_text
+    return [dict(_PLACEHOLDER_ZJN)]
 
 
 def _explanation_for(status: AnalysisItemStatus) -> tuple[str | None, str | None]:
@@ -134,7 +115,7 @@ def _explanation_for(status: AnalysisItemStatus) -> tuple[str | None, str | None
     )
 
 
-def _serialize_item(item: AnalysisItem) -> dict[str, Any]:
+def _serialize_item(item: AnalysisItem, citations: list[Citation]) -> dict[str, Any]:
     return {
         "id": str(item.id),
         "position": item.position,
@@ -143,6 +124,7 @@ def _serialize_item(item: AnalysisItem) -> dict[str, Any]:
         "status": item.status.value,
         "explanation": item.explanation,
         "suggestion": item.suggestion,
+        "metadata_json": item.metadata_json,
         "citations": [
             {
                 "id": str(c.id),
@@ -151,7 +133,7 @@ def _serialize_item(item: AnalysisItem) -> dict[str, Any]:
                 "snippet": c.snippet,
                 "url": c.url,
             }
-            for c in item.citations
+            for c in citations
         ],
     }
 
@@ -165,7 +147,7 @@ async def _persist_item(
     explanation: str | None,
     suggestion: str | None,
     citations: list[dict[str, Any]],
-) -> AnalysisItem:
+) -> tuple[AnalysisItem, list[Citation]]:
     item = AnalysisItem(
         analysis_id=analysis_id,
         position=parsed.position,
@@ -179,18 +161,19 @@ async def _persist_item(
     session.add(item)
     await session.flush()
 
+    citation_objs: list[Citation] = []
     for cit in citations:
-        item.citations.append(
-            Citation(
-                source=cit["source"],
-                reference=cit["reference"],
-                snippet=cit["snippet"],
-                url=cit.get("url"),
-            )
+        c = Citation(
+            item_id=item.id,
+            source=cit["source"],
+            reference=cit["reference"],
+            snippet=cit["snippet"],
+            url=cit.get("url"),
         )
+        session.add(c)
+        citation_objs.append(c)
     await session.flush()
-    await session.refresh(item, attribute_names=["citations"])
-    return item
+    return item, citation_objs
 
 
 async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
@@ -241,7 +224,7 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             status = _pick_status()
             explanation, suggestion = _explanation_for(status)
             citations = await _build_citations(status, parsed_item.text)
-            stored = await _persist_item(
+            stored, stored_citations = await _persist_item(
                 session,
                 analysis_id=analysis_id,
                 parsed=parsed_item,
@@ -259,7 +242,7 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
                 {
                     "type": "item",
                     "analysis_id": str(analysis_id),
-                    "item": _serialize_item(stored),
+                    "item": _serialize_item(stored, stored_citations),
                     "progress": analysis.progress_percent,
                 },
             )

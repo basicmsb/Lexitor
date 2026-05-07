@@ -8,7 +8,7 @@ export default function AppLayout({
     <AuthGate>
       <div className="flex min-h-screen bg-surface">
         <Sidebar />
-        <main className="flex-1 p-8">{children}</main>
+        <main className="flex-1 min-w-0 p-8">{children}</main>
       </div>
     </AuthGate>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { StatusBadge, StatusDot } from "@/components/StatusBadge";
 import type {
@@ -9,6 +9,12 @@ import type {
   AnalysisSummary,
   CitationPublic,
 } from "@/lib/types";
+
+function getSheet(item: AnalysisItemPublic): string {
+  const meta = item.metadata_json as Record<string, unknown> | null | undefined;
+  const sheet = meta?.sheet;
+  return typeof sheet === "string" && sheet ? sheet : "Ostalo";
+}
 
 const SOURCE_LABEL: Record<string, string> = {
   zjn: "ZJN",
@@ -28,25 +34,74 @@ interface Props {
 
 export function AnalysisResults({ status, progress, items, summary, error }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeSheet, setActiveSheet] = useState<string | null>(null);
+
+  const sheetNames = useMemo(() => {
+    const order: string[] = [];
+    const seen = new Set<string>();
+    for (const it of items) {
+      const name = getSheet(it);
+      if (!seen.has(name)) {
+        seen.add(name);
+        order.push(name);
+      }
+    }
+    return order;
+  }, [items]);
+
+  // Auto-select the first sheet when items first arrive (or when active is gone).
+  useEffect(() => {
+    if (sheetNames.length === 0) {
+      if (activeSheet !== null) setActiveSheet(null);
+      return;
+    }
+    if (activeSheet === null || !sheetNames.includes(activeSheet)) {
+      setActiveSheet(sheetNames[0]);
+    }
+  }, [sheetNames, activeSheet]);
+
+  const filteredItems = useMemo(() => {
+    if (activeSheet === null) return items;
+    return items.filter((it) => getSheet(it) === activeSheet);
+  }, [items, activeSheet]);
 
   const selected = useMemo(
-    () => items.find((it) => it.id === selectedId) ?? items[0] ?? null,
-    [items, selectedId],
+    () =>
+      filteredItems.find((it) => it.id === selectedId) ??
+      filteredItems[0] ??
+      null,
+    [filteredItems, selectedId],
   );
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-200px)]">
       <Header status={status} progress={progress} summary={summary} error={error} count={items.length} />
 
+      {sheetNames.length > 0 && (
+        <SheetTabs
+          sheetNames={sheetNames}
+          activeSheet={activeSheet}
+          onSelect={(name) => {
+            setActiveSheet(name);
+            setSelectedId(null);
+          }}
+          countsBySheet={items.reduce<Record<string, number>>((acc, it) => {
+            const name = getSheet(it);
+            acc[name] = (acc[name] ?? 0) + 1;
+            return acc;
+          }, {})}
+        />
+      )}
+
       <div className="flex flex-1 gap-4 min-h-0">
         <aside className="w-72 shrink-0 rounded-lg border border-brand-border bg-white overflow-y-auto">
-          {items.length === 0 ? (
+          {filteredItems.length === 0 ? (
             <p className="p-4 text-sm text-muted italic">
               {status === "running" ? "Čekam prve rezultate…" : "Nema stavki."}
             </p>
           ) : (
             <ul className="divide-y divide-brand-border">
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
@@ -57,7 +112,7 @@ export function AnalysisResults({ status, progress, items, summary, error }: Pro
                   >
                     <StatusDot status={item.status} />
                     <span className="truncate" title={item.text}>
-                      {item.label ? `${item.label}: ${item.text}` : item.text}
+                      {compactLabel(item)}
                     </span>
                   </button>
                 </li>
@@ -72,6 +127,208 @@ export function AnalysisResults({ status, progress, items, summary, error }: Pro
       </div>
     </div>
   );
+}
+
+function SheetTabs({
+  sheetNames,
+  activeSheet,
+  onSelect,
+  countsBySheet,
+}: {
+  sheetNames: string[];
+  activeSheet: string | null;
+  onSelect: (name: string) => void;
+  countsBySheet: Record<string, number>;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(sheetNames.length);
+
+  // Measure ghost tabs and decide how many fit in the visible row.
+  useLayoutEffect(() => {
+    function measure() {
+      const container = containerRef.current;
+      const ghost = ghostRef.current;
+      if (!container || !ghost) return;
+      const ghostTabs = Array.from(
+        ghost.querySelectorAll<HTMLElement>("[data-ghost-tab]"),
+      );
+      if (ghostTabs.length === 0) return;
+      const containerWidth = container.clientWidth;
+      const dropdownReserve = 84; // approx width of "Više ▾" button incl. border
+      const gap = 4; // tailwind gap-1
+
+      // Try fitting all tabs first (no dropdown)
+      const totalWidth = ghostTabs.reduce(
+        (acc, el, i) => acc + el.offsetWidth + (i > 0 ? gap : 0),
+        0,
+      );
+      if (totalWidth <= containerWidth) {
+        setVisibleCount(sheetNames.length);
+        return;
+      }
+
+      const limit = containerWidth - dropdownReserve;
+      let used = 0;
+      let count = 0;
+      for (let i = 0; i < ghostTabs.length; i++) {
+        const w = ghostTabs[i].offsetWidth + (i > 0 ? gap : 0);
+        if (used + w > limit) break;
+        used += w;
+        count++;
+      }
+      setVisibleCount(Math.max(1, count));
+    }
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [sheetNames]);
+
+  // Close menu on outside click + escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const visibleTabs = sheetNames.slice(0, visibleCount);
+  const hiddenTabs = sheetNames.slice(visibleCount);
+  const hasHidden = hiddenTabs.length > 0;
+  const activeIsHidden =
+    activeSheet !== null && hiddenTabs.includes(activeSheet);
+
+  return (
+    <>
+      {/* Off-screen ghost row for measurement only — never visible. */}
+      <div
+        ref={ghostRef}
+        aria-hidden
+        className="invisible pointer-events-none fixed -top-[9999px] left-0 flex gap-1"
+      >
+        {sheetNames.map((name) => (
+          <span
+            key={name}
+            data-ghost-tab
+            className="shrink-0 px-3 py-2 text-sm whitespace-nowrap"
+          >
+            {name}
+            <span className="ml-2 text-xs">{countsBySheet[name] ?? 0}</span>
+          </span>
+        ))}
+      </div>
+
+      <div
+        ref={wrapRef}
+        className="relative flex items-stretch border-b border-brand-border"
+      >
+        <div
+          ref={containerRef}
+          className="flex gap-1 flex-1 min-w-0 overflow-hidden pb-px -mb-px"
+        >
+          {visibleTabs.map((name) => {
+            const isActive = name === activeSheet;
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => onSelect(name)}
+                className={`shrink-0 px-3 py-2 text-sm whitespace-nowrap border-b-2 transition ${
+                  isActive
+                    ? "border-ink text-ink font-medium"
+                    : "border-transparent text-muted hover:text-ink"
+                }`}
+              >
+                {name}
+                <span className="ml-2 text-xs text-muted">{countsBySheet[name] ?? 0}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {hasHidden && (
+          <div className="relative flex items-stretch border-l border-brand-border shrink-0 bg-surface">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className={`px-3 py-2 text-sm transition flex items-center gap-1 border-b-2 ${
+                activeIsHidden
+                  ? "border-ink text-ink font-medium"
+                  : "border-transparent text-navy hover:text-ink hover:bg-surface-2"
+              }`}
+            >
+              Više
+              <span className="text-xs text-muted">+{hiddenTabs.length}</span>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-20 mt-1 w-72 max-h-80 overflow-y-auto rounded-md border border-brand-border bg-white shadow-lg py-1"
+              >
+                {hiddenTabs.map((name) => {
+                  const isActive = name === activeSheet;
+                  return (
+                    <button
+                      key={name}
+                      role="menuitem"
+                      type="button"
+                      onClick={() => {
+                        onSelect(name);
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-3 hover:bg-surface-2 transition ${
+                        isActive ? "font-medium text-ink bg-surface-2" : "text-navy"
+                      }`}
+                    >
+                      <span className="truncate">{name}</span>
+                      <span className="text-xs text-muted shrink-0">
+                        {countsBySheet[name] ?? 0}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Tree row label — drop the "sheet · row N" prefix because the sheet tab
+ *  already shows it. Prefer block label (rb + title) when available. */
+function compactLabel(item: AnalysisItemPublic): string {
+  if (item.label && !item.label.includes(" · red ")) {
+    return item.label;
+  }
+  const text = item.text.split("\n")[0] ?? item.text;
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 
 function Header({

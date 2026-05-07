@@ -38,6 +38,27 @@ async def start_analysis(
     if document is None or document.project_id != current_user.project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dokument nije pronađen.")
 
+    # If a recent (non-stale) analysis is already running for this doc,
+    # return it instead of starting a duplicate. This guards against
+    # React Strict Mode firing the bootstrap effect twice in dev.
+    existing_stmt = (
+        select(Analysis)
+        .where(
+            Analysis.document_id == document.id,
+            Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+        )
+        .order_by(Analysis.created_at.desc())
+        .limit(1)
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        return StartAnalysisResponse(
+            analysis_id=existing.id,
+            document_id=document.id,
+            status=existing.status,
+        )
+
     analysis = Analysis(document_id=document.id, status=AnalysisStatus.PENDING)
     session.add(analysis)
     await session.commit()

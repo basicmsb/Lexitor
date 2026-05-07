@@ -32,6 +32,10 @@ export default function AnalizaTroskovnikPage() {
     setDocuments((prev) => [doc, ...prev]);
   };
 
+  const onDeleted = (id: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  };
+
   return (
     <div className="max-w-4xl">
       <div className="mb-8">
@@ -53,7 +57,7 @@ export default function AnalizaTroskovnikPage() {
         {loading ? (
           <p className="text-sm text-muted">Učitavam…</p>
         ) : (
-          <DocumentList documents={documents} />
+          <DocumentList documents={documents} onDeleted={onDeleted} />
         )}
       </div>
     </div>

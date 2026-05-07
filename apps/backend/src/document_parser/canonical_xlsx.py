@@ -32,15 +32,16 @@ from src.document_parser.base import ParsedDocument, ParsedItem, ParserError
 # Sheet classification
 
 SKIP_SHEET_TOKENS = (
-    "naslovnic",
-    "sadrz",
+    "naslovn",  # naslovna, naslovnica, naslovni
+    "sadrz",  # sadržaj, sadrzaj
     "sadrž",
-    "eksportiraj",
+    "eksportiraj",  # Apple Numbers TOC export
     "summary",
     "export",
     "title page",
     "cover",
     "toc",
+    "korice",
 )
 OPCI_UVJETI_TOKENS = ("opci uvj", "opće uvj", "opce uvj", "general cond")
 REKAPITULACIJA_TOKENS = ("rekapitul", "recapitul", "summary of works")
