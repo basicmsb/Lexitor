@@ -1,15 +1,60 @@
-export default function AnalizaTroskovnikPage() {
-  return (
-    <div>
-      <h1 className="font-serif text-3xl font-semibold mb-2">Analiza troškovnika</h1>
-      <p className="text-slate-600">
-        Učitaj PDF, XLSX ili .arhigonfile — Lexitor će analizirati svaku stavku.
-      </p>
+"use client";
 
-      <div className="mt-8 rounded-lg border-2 border-dashed border-slate-300 bg-white p-16 text-center">
-        <p className="text-slate-500">
-          Drag & drop area placeholder — implementacija u Sprintu 1
+import { useCallback, useEffect, useState } from "react";
+
+import { DocumentList } from "@/components/DocumentList";
+import { UploadDropzone } from "@/components/UploadDropzone";
+import { api } from "@/lib/api";
+import type { DocumentPublic } from "@/lib/types";
+
+export default function AnalizaTroskovnikPage() {
+  const [documents, setDocuments] = useState<DocumentPublic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await api.listDocuments();
+      setDocuments(list.items.filter((d) => d.document_type === "troskovnik"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Greška pri dohvatu.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const onUploaded = (doc: DocumentPublic) => {
+    setDocuments((prev) => [doc, ...prev]);
+  };
+
+  return (
+    <div className="max-w-4xl">
+      <div className="mb-8">
+        <h1 className="font-serif text-3xl font-semibold mb-2">Analiza troškovnika</h1>
+        <p className="text-slate-600">
+          Učitaj PDF, XLSX ili .arhigonfile — Lexitor će analizirati svaku stavku.
         </p>
+      </div>
+
+      <UploadDropzone documentType="troskovnik" onUploaded={onUploaded} />
+
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-slate-900 mb-3">Nedavno učitano</h2>
+        {error && (
+          <p className="text-sm text-status-fail bg-red-50 border border-red-100 rounded-md px-3 py-2 mb-3">
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="text-sm text-slate-500">Učitavam…</p>
+        ) : (
+          <DocumentList documents={documents} />
+        )}
       </div>
     </div>
   );
