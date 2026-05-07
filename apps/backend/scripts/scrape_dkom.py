@@ -31,16 +31,29 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-LISTING_URL = "https://www.dkom.hr/javna-objava-odluka/10"
+LISTING_URL_TEMPLATE = (
+    "https://www.dkom.hr/subpage.aspx?url=javna-objava-odluka&id=10&page={page}"
+)
 DEFAULT_OUTPUT = Path("data/02-dkom-odluke")
-USER_AGENT = "Lexitor/0.0.1 (DKOM scraper for legal compliance research)"
+USER_AGENT = (
+    "Lexitor/0.0.1 (legal-compliance research, contact: marko.basic@arhigon.com)"
+)
 DATE_FORMATS = ("%d.%m.%Y.", "%d.%m.%Y", "%Y-%m-%d")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="DKOM odluke scraper")
+    p = argparse.ArgumentParser(description="DKOM odluke scraper (poštuje rate limits)")
     p.add_argument("--year", type=int, help="Filtriraj odluke iz zadane godine")
     p.add_argument("--max", type=int, default=None, help="Maksimalan broj odluka za skinuti")
+    p.add_argument(
+        "--start-page", type=int, default=1, help="Početna stranica listing-a (default 1)"
+    )
+    p.add_argument(
+        "--end-page",
+        type=int,
+        default=None,
+        help="Zadnja stranica listing-a (uključujuća). Default: ista kao start-page.",
+    )
     p.add_argument(
         "--output",
         type=Path,
@@ -50,8 +63,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--delay",
         type=float,
-        default=1.0,
-        help="Razmak između download-a u sekundama (default 1.0)",
+        default=3.0,
+        help="Razmak između PDF download-a u sekundama (default 3.0)",
+    )
+    p.add_argument(
+        "--page-delay",
+        type=float,
+        default=8.0,
+        help="Razmak između stranica listing-a (default 8.0)",
     )
     p.add_argument(
         "--dry-run",
@@ -173,21 +192,58 @@ def append_index(index_path: Path, row: dict[str, Any]) -> None:
         )
 
 
+def fetch_listing_pages(
+    *,
+    client: httpx.Client,
+    start_page: int,
+    end_page: int,
+    page_delay: float,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_klasa: set[str] = set()
+    for page in range(start_page, end_page + 1):
+        url = LISTING_URL_TEMPLATE.format(page=page)
+        print(f"  GET {url}", file=sys.stderr)
+        response = client.get(url)
+        response.raise_for_status()
+        page_rows = extract_rows(response.text)
+        new = 0
+        for row in page_rows:
+            if row["klasa"] in seen_klasa:
+                continue
+            seen_klasa.add(row["klasa"])
+            rows.append(row)
+            new += 1
+        print(f"    -> {new} new rows (page total {len(page_rows)})", file=sys.stderr)
+        if page < end_page:
+            time.sleep(page_delay)
+    return rows
+
+
 def main() -> int:
     args = parse_args()
     output_root = args.output.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     index_path = output_root / "index.csv"
 
-    print(f"Fetching {LISTING_URL}", file=sys.stderr)
+    end_page = args.end_page or args.start_page
+
+    print(
+        f"Fetching pages {args.start_page}..{end_page} (page delay {args.page_delay}s,"
+        f" pdf delay {args.delay}s)",
+        file=sys.stderr,
+    )
     with httpx.Client(
         timeout=args.timeout, follow_redirects=True, headers={"User-Agent": USER_AGENT}
     ) as client:
-        listing = client.get(LISTING_URL)
-        listing.raise_for_status()
-        rows = extract_rows(listing.text)
+        rows = fetch_listing_pages(
+            client=client,
+            start_page=args.start_page,
+            end_page=end_page,
+            page_delay=args.page_delay,
+        )
 
-    print(f"  Found {len(rows)} decisions in listing.", file=sys.stderr)
+    print(f"  Found {len(rows)} unique decisions across listing pages.", file=sys.stderr)
     rows = filter_rows(rows, year=args.year)
     if args.year is not None:
         print(f"  After year filter ({args.year}): {len(rows)} decisions.", file=sys.stderr)

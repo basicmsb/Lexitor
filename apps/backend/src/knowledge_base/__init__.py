@@ -5,6 +5,7 @@ from src.knowledge_base.indexer import (
     SearchHit,
     ensure_collection,
     index_chunks,
+    list_indexed_sources,
     search,
 )
 from src.knowledge_base.pdf_text import extract_pdf_text
@@ -19,5 +20,6 @@ __all__ = [
     "ensure_collection",
     "extract_pdf_text",
     "index_chunks",
+    "list_indexed_sources",
     "search",
 ]

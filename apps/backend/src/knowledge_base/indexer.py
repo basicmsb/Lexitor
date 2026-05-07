@@ -102,19 +102,74 @@ async def delete_by_klasa(klasa: str, collection: str = DKOM_COLLECTION) -> None
     )
 
 
+async def list_indexed_sources(
+    *,
+    collection: str = DKOM_COLLECTION,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Return one entry per indexed legal source, deduped by klasa.
+
+    The Qdrant collection holds one point per chunk; we sweep all points
+    and group by klasa so the documentation page can list each ZJN article
+    or DKOM decision exactly once.
+    """
+    qdrant = _client()
+    seen: dict[str, dict[str, Any]] = {}
+    next_offset: Any = None
+    while True:
+        records, next_offset = await qdrant.scroll(
+            collection_name=collection,
+            limit=256,
+            offset=next_offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for point in records:
+            payload = dict(point.payload or {})
+            klasa = payload.get("klasa") or ""
+            if not klasa or klasa in seen:
+                continue
+            seen[klasa] = {
+                "source": payload.get("source", ""),
+                "klasa": klasa,
+                "predmet": payload.get("predmet", ""),
+                "narucitelj": payload.get("narucitelj", ""),
+                "vrsta": payload.get("vrsta", ""),
+                "year": payload.get("year", ""),
+                "odluka_datum": payload.get("odluka_datum", ""),
+                "pdf_url": payload.get("pdf_url", ""),
+                "article_number": payload.get("article_number"),
+            }
+        if next_offset is None or len(seen) >= limit:
+            break
+
+    items = list(seen.values())
+    # ZJN first (sorted by article number), then DKOM by klasa
+    items.sort(
+        key=lambda x: (
+            0 if x.get("source") == "zjn" else 1,
+            x.get("article_number") if isinstance(x.get("article_number"), int) else 10**9,
+            x.get("klasa", ""),
+        )
+    )
+    return items[:limit]
+
+
 async def search(
     query: str,
     *,
     limit: int = 5,
     collection: str = DKOM_COLLECTION,
     year: str | None = None,
+    source: str | None = None,
 ) -> list[SearchHit]:
     vector = await embed_query(query)
-    qdrant_filter: Filter | None = None
+    must: list[FieldCondition] = []
     if year is not None:
-        qdrant_filter = Filter(
-            must=[FieldCondition(key="year", match=MatchValue(value=year))]
-        )
+        must.append(FieldCondition(key="year", match=MatchValue(value=year)))
+    if source is not None:
+        must.append(FieldCondition(key="source", match=MatchValue(value=source)))
+    qdrant_filter: Filter | None = Filter(must=must) if must else None
     response = await _client().query_points(
         collection_name=collection,
         query=vector,
