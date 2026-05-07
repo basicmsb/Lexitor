@@ -185,11 +185,57 @@ def _str(row: tuple[Cell, ...], col: int | None) -> str:
     return str(val).strip()
 
 
+def _num(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).replace(",", ".").strip()
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
 def _has_math(row: tuple[Cell, ...], mapping: ColumnMapping) -> bool:
     return any(
         _value(row, c) not in (None, "")
         for c in (mapping.jm, mapping.kol, mapping.cijena, mapping.iznos)
     )
+
+
+# Markers Marko uses to introduce a list of sub-positions inside an item.
+_POSITIONS_HEADER_RE = re.compile(
+    r"(?im)^(?:POZICIJE|POZICIJA|POPIS|SUBPOZICIJE|STAVKE|RAZRADA|RAZRAĐUJE)\s*:?\s*$"
+)
+_POSITION_BULLET_RE = re.compile(r"^\s*[-–•·]\s*(.+?)\s*$")
+
+
+def _extract_positions(text: str) -> list[str]:
+    """Return the list of bullet labels under a 'POZICIJE:' header, if any."""
+    if not text:
+        return []
+    lines = text.splitlines()
+    started = False
+    out: list[str] = []
+    for line in lines:
+        if not started:
+            if _POSITIONS_HEADER_RE.match(line):
+                started = True
+            continue
+        m = _POSITION_BULLET_RE.match(line)
+        if m:
+            label = m.group(1).strip()
+            if label:
+                out.append(label)
+            continue
+        # Empty line or a line that doesn't look like a bullet → end of list
+        if line.strip() == "":
+            if out:
+                break
+            continue
+        break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -210,14 +256,28 @@ class _Block:
 
     def add_math(self, row: tuple[Cell, ...], mapping: ColumnMapping, row_index: int) -> None:
         iznos_cell = _cell(row, mapping.iznos)
+        kol_value = _value(row, mapping.kol)
+        cijena_value = _value(row, mapping.cijena)
+        is_formula = bool(iznos_cell and iznos_cell.data_type == "f")
+        raw_iznos = iznos_cell.value if iznos_cell is not None else None
+        # When the iznos cell is empty but količina + cijena are both
+        # numeric, compute the total ourselves so the user always sees
+        # one. Mark it as "computed" so the UI can label it.
+        computed_iznos: float | None = None
+        if (raw_iznos in (None, "")) and not is_formula:
+            kol_num = _num(kol_value)
+            cijena_num = _num(cijena_value)
+            if kol_num is not None and cijena_num is not None:
+                computed_iznos = round(kol_num * cijena_num, 2)
         self.math_rows.append(
             {
                 "row": row_index,
                 "jm": _str(row, mapping.jm),
-                "kol": _value(row, mapping.kol),
-                "cijena": _value(row, mapping.cijena),
-                "iznos": iznos_cell.value if iznos_cell is not None else None,
-                "iznos_is_formula": bool(iznos_cell and iznos_cell.data_type == "f"),
+                "kol": kol_value,
+                "cijena": cijena_value,
+                "iznos": raw_iznos,
+                "iznos_is_formula": is_formula,
+                "computed_iznos": computed_iznos,
             }
         )
 
@@ -303,6 +363,15 @@ def parse_stavke_sheet(ws, sheet_name: str) -> list[ParsedItem]:
             continue
         label_parts = [p for p in (block.label, block.title) if p]
         label = " · ".join(label_parts) or sheet_name
+
+        positions = _extract_positions(text)
+        # Pair positions with math rows whenever both lists are present
+        # and have matching cardinalities. This is Marko's standard
+        # convention: "POZICIJE: - nastamba - bazeni …" + N math rows.
+        if positions and block.math_rows and len(positions) == len(block.math_rows):
+            for label_text, math_row in zip(positions, block.math_rows, strict=True):
+                math_row["position_label"] = label_text
+
         items.append(
             ParsedItem(
                 position=len(items),
@@ -314,6 +383,7 @@ def parse_stavke_sheet(ws, sheet_name: str) -> list[ParsedItem]:
                     "kind": "stavka",
                     "rb": block.label,
                     "math_rows": block.math_rows,
+                    "positions": positions or None,
                 },
             )
         )

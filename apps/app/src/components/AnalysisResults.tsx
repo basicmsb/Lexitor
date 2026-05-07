@@ -411,6 +411,8 @@ interface MathRow {
   cijena?: number | string | null;
   iznos?: number | string | null;
   iznos_is_formula?: boolean;
+  computed_iznos?: number | null;
+  position_label?: string | null;
 }
 
 function getMathRows(item: AnalysisItemPublic): MathRow[] {
@@ -418,6 +420,20 @@ function getMathRows(item: AnalysisItemPublic): MathRow[] {
   const rows = meta?.math_rows;
   if (!Array.isArray(rows)) return [];
   return rows as MathRow[];
+}
+
+function rowsHavePositions(rows: MathRow[]): boolean {
+  return rows.some((r) => typeof r.position_label === "string" && r.position_label.length > 0);
+}
+
+function trimPositionsFromText(text: string): string {
+  // Drop everything from the "POZICIJE:" line onward — that list is
+  // already shown as the first column of the math table, repeating it
+  // in the prose adds noise.
+  const re = /(^|\n)\s*(POZICIJE|POZICIJA|POPIS|SUBPOZICIJE|STAVKE|RAZRADA|RAZRAĐUJE)\s*:?\s*\n/i;
+  const m = re.exec(text);
+  if (!m) return text;
+  return text.slice(0, m.index).trimEnd();
 }
 
 function formatNumber(value: unknown): string {
@@ -434,16 +450,20 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
   const label = statusLabel(item.status);
   const { rb, title } = splitLabel(item.label);
   const mathRows = getMathRows(item);
+  const hasPositions = rowsHavePositions(mathRows);
 
   // Body text shown in the callout. If the title is repeated as the first
   // line of `text`, drop it so we don't show the same string twice.
   const cleanText = (() => {
-    if (!title) return item.text;
-    const firstLine = item.text.split("\n", 1)[0];
-    if (firstLine === title) {
-      return item.text.slice(firstLine.length).replace(/^[\s\n]+/, "");
+    let result = item.text;
+    if (title) {
+      const firstLine = result.split("\n", 1)[0];
+      if (firstLine === title) {
+        result = result.slice(firstLine.length).replace(/^[\s\n]+/, "");
+      }
     }
-    return item.text;
+    if (hasPositions) result = trimPositionsFromText(result);
+    return result;
   })();
 
   // Translate highlight offsets when we trimmed the title prefix
@@ -481,32 +501,68 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
 
         {mathRows.length > 0 && (
           <div className="mt-5 overflow-x-auto">
-            <table className="text-sm">
+            <table className="text-sm w-full">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wider text-muted">
-                  <th className="pr-4 py-1 text-left font-medium">Jed.mjere</th>
+                  {hasPositions && (
+                    <th className="pr-4 py-1 text-left font-medium">Pozicija</th>
+                  )}
+                  <th className="pr-4 py-1 text-left font-medium">Jed. mjere</th>
                   <th className="pr-4 py-1 text-right font-medium">Količina</th>
                   <th className="pr-4 py-1 text-right font-medium">Jed. cijena</th>
                   <th className="pr-4 py-1 text-right font-medium">Iznos</th>
-                  <th className="py-1 text-left font-medium">Formula</th>
+                  <th className="py-1 text-left font-medium">Provjera</th>
                 </tr>
               </thead>
               <tbody className="text-navy font-mono">
-                {mathRows.map((row, idx) => (
-                  <tr key={idx} className="border-t border-brand-border">
-                    <td className="pr-4 py-1.5">{row.jm || "—"}</td>
-                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.kol)}</td>
-                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.cijena)}</td>
-                    <td className="pr-4 py-1.5 text-right">{formatNumber(row.iznos)}</td>
-                    <td className="py-1.5">
-                      {row.iznos_is_formula ? (
-                        <span className="text-status-ok text-xs">✓ formula</span>
-                      ) : (
-                        <span className="text-[#A87F2E] text-xs">⚠ hardkodirano</span>
+                {mathRows.map((row, idx) => {
+                  const computed = row.computed_iznos;
+                  const displayed =
+                    row.iznos !== null && row.iznos !== undefined && row.iznos !== ""
+                      ? formatNumber(row.iznos)
+                      : computed !== null && computed !== undefined
+                        ? formatNumber(computed)
+                        : "—";
+                  return (
+                    <tr key={idx} className="border-t border-brand-border">
+                      {hasPositions && (
+                        <td className="pr-4 py-1.5 font-sans">
+                          {row.position_label || (
+                            <span className="text-muted italic">—</span>
+                          )}
+                        </td>
                       )}
-                    </td>
-                  </tr>
-                ))}
+                      <td className="pr-4 py-1.5">{row.jm || "—"}</td>
+                      <td className="pr-4 py-1.5 text-right">{formatNumber(row.kol)}</td>
+                      <td className="pr-4 py-1.5 text-right">{formatNumber(row.cijena)}</td>
+                      <td
+                        className={`pr-4 py-1.5 text-right ${
+                          computed !== null && computed !== undefined
+                            ? "italic text-muted"
+                            : ""
+                        }`}
+                        title={
+                          computed !== null && computed !== undefined
+                            ? "Iznos računa Lexitor (kol × cijena) — ćelija nije popunjena"
+                            : undefined
+                        }
+                      >
+                        {displayed}
+                      </td>
+                      <td className="py-1.5">
+                        {row.iznos_is_formula ? (
+                          <span className="text-[#3F7D45] text-xs">✓ formula</span>
+                        ) : computed !== null && computed !== undefined ? (
+                          <span className="text-muted text-xs">∑ Lexitor</span>
+                        ) : row.iznos !== null && row.iznos !== undefined && row.iznos !== "" ? (
+                          <span className="text-[#A87F2E] text-xs">⚠ hardkodirano</span>
+                        ) : (
+                          <span className="text-muted text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
