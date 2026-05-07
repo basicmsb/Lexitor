@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { StatusBadge, StatusDot } from "@/components/StatusBadge";
+import { StatusDot, statusAccent, statusLabel } from "@/components/StatusBadge";
 import type {
   AnalysisItemPublic,
   AnalysisStatus,
@@ -394,42 +394,108 @@ function NoSelection() {
   return <p className="text-sm text-muted">Odaberi stavku iz lijevog stabla.</p>;
 }
 
+/** Best-effort split of an existing `label` like "1.1.1 · Uređenje gradilišta"
+ *  into rb + naslov. Falls back to the full label as title. */
+function splitLabel(label: string | null): { rb: string | null; title: string | null } {
+  if (!label) return { rb: null, title: null };
+  const idx = label.indexOf(" · ");
+  if (idx === -1) return { rb: null, title: label };
+  return { rb: label.slice(0, idx), title: label.slice(idx + 3) };
+}
+
+const GOLD = "#B8893E";
+
 function ItemDetail({ item }: { item: AnalysisItemPublic }) {
+  const accent = statusAccent(item.status);
+  const label = statusLabel(item.status);
+  const { rb, title } = splitLabel(item.label);
+
+  // Body text shown in the callout. If the title is repeated as the first
+  // line of `text`, drop it so we don't show the same string twice.
+  const cleanText = (() => {
+    if (!title) return item.text;
+    const firstLine = item.text.split("\n", 1)[0];
+    if (firstLine === title) {
+      return item.text.slice(firstLine.length).replace(/^[\s\n]+/, "");
+    }
+    return item.text;
+  })();
+
   return (
-    <div>
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div>
-          {item.label && (
-            <p className="text-xs uppercase tracking-wide text-muted mb-1">{item.label}</p>
-          )}
-          <h2 className="font-serif text-xl text-ink leading-snug">{item.text}</h2>
-        </div>
-        <StatusBadge status={item.status} />
-      </div>
+    <article
+      className="border-l-4 pl-6 -ml-2"
+      style={{ borderColor: accent }}
+    >
+      <header className="flex items-start justify-between gap-4 mb-3">
+        <span
+          className="inline-flex items-center gap-2 text-xs uppercase tracking-wider font-medium"
+          style={{ color: accent }}
+        >
+          <span
+            aria-hidden
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: accent }}
+          />
+          {label}
+        </span>
+        {rb && (
+          <span className="text-sm text-muted font-mono">Stavka {rb}</span>
+        )}
+      </header>
+
+      {title && (
+        <h2 className="font-display text-2xl text-ink leading-snug mb-5">
+          {title}
+        </h2>
+      )}
+
+      {cleanText && (
+        <blockquote
+          className="border-l-2 bg-surface-2/60 pl-4 pr-3 py-3 mb-6 italic text-navy text-sm leading-relaxed whitespace-pre-line"
+          style={{ borderColor: GOLD }}
+        >
+          „{cleanText}”
+        </blockquote>
+      )}
 
       {item.explanation && (
-        <section className="mb-5">
-          <h3 className="text-sm font-semibold text-ink mb-1">Objašnjenje</h3>
-          <p className="text-sm text-navy leading-relaxed">{item.explanation}</p>
-        </section>
+        <Section accent={accent} title="Zašto">
+          {item.explanation}
+        </Section>
       )}
 
       {item.suggestion && (
-        <section className="mb-5">
-          <h3 className="text-sm font-semibold text-ink mb-1">Prijedlog ispravka</h3>
-          <p className="text-sm text-navy leading-relaxed">{item.suggestion}</p>
-        </section>
+        <Section accent={accent} title="Predloženi ispravak">
+          {item.suggestion}
+        </Section>
       )}
 
       {item.citations.length > 0 && (
-        <section className="mb-5">
-          <h3 className="text-sm font-semibold text-ink mb-2">Citirani izvori</h3>
-          <ul className="space-y-3">
+        <>
+          <hr className="my-5 border-brand-border" />
+          <ul className="space-y-1 text-xs font-mono text-muted">
             {item.citations.map((c) => (
-              <CitationCard key={c.id} citation={c} />
+              <li key={c.id}>
+                <span className="text-navy">
+                  {SOURCE_LABEL[c.source] ?? c.source.toUpperCase()} {c.reference}
+                </span>
+                {c.url && (
+                  <>
+                    {" · "}
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-signal hover:underline"
+                    >
+                      otvori izvor
+                    </a>
+                  </>
+                )}
+              </li>
             ))}
           </ul>
-        </section>
+        </>
       )}
 
       <div className="mt-6 pt-4 border-t border-brand-border flex flex-wrap gap-2">
@@ -458,27 +524,28 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
           Označi kao false positive
         </button>
       </div>
-    </div>
+    </article>
   );
 }
 
-function CitationCard({ citation }: { citation: CitationPublic }) {
+function Section({
+  accent,
+  title,
+  children,
+}: {
+  accent: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <li className="rounded-md border border-brand-border bg-surface-2 p-3">
-      <p className="text-xs font-mono uppercase tracking-wider text-navy mb-1">
-        {SOURCE_LABEL[citation.source] ?? citation.source.toUpperCase()} · {citation.reference}
-      </p>
-      <p className="text-sm text-ink leading-relaxed">{citation.snippet}</p>
-      {citation.url && (
-        <a
-          href={citation.url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-2 inline-block text-xs text-signal hover:underline"
-        >
-          Otvori izvor →
-        </a>
-      )}
-    </li>
+    <section className="mb-4">
+      <h3
+        className="text-[11px] uppercase tracking-[0.18em] font-semibold mb-1.5"
+        style={{ color: accent }}
+      >
+        {title}
+      </h3>
+      <p className="text-sm text-navy leading-relaxed">{children}</p>
+    </section>
   );
 }

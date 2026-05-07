@@ -79,3 +79,7 @@ export function statusLabel(status: AnalysisItemStatus): string {
 export function statusDescription(status: AnalysisItemStatus): string {
   return STYLES[status].description;
 }
+
+export function statusAccent(status: AnalysisItemStatus): string {
+  return STYLES[status].dotHex;
+}
