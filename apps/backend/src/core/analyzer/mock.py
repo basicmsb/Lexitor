@@ -12,6 +12,7 @@ from src.core.events import bus
 from src.db.session import SessionLocal
 from src.document_parser import parse_document
 from src.document_parser.base import ParsedItem
+from src.knowledge_base import search as knowledge_search
 from src.models import (
     Analysis,
     AnalysisItem,
@@ -71,48 +72,49 @@ def _pick_status() -> AnalysisItemStatus:
     return AnalysisItemStatus.OK
 
 
-def _mock_citations(item_status: AnalysisItemStatus) -> list[dict[str, Any]]:
+_PLACEHOLDER_ZJN = {
+    "source": CitationSource.ZJN,
+    "reference": "Članak 207. ZJN",
+    "snippet": (
+        "Kada se u tehničkoj specifikaciji upućuje na konkretnu marku, mora se "
+        "dodati riječ „ili jednakovrijedno”."
+    ),
+    "url": "https://narodne-novine.nn.hr/clanci/sluzbeni/2016_12_120_2607.html",
+}
+
+
+async def _build_citations(
+    item_status: AnalysisItemStatus,
+    item_text: str,
+) -> list[dict[str, Any]]:
+    """Build citations for a flagged item.
+
+    For FAIL/WARN/UNCERTAIN we run a semantic search against indexed DKOM
+    decisions and return up to 2 hits + the placeholder ZJN reference.
+    If the knowledge base is empty or unreachable, we degrade gracefully
+    to the placeholder only.
+    """
     if item_status == AnalysisItemStatus.OK:
         return []
 
-    samples: list[dict[str, Any]] = []
+    samples: list[dict[str, Any]] = [dict(_PLACEHOLDER_ZJN)]
 
-    if item_status in (AnalysisItemStatus.FAIL, AnalysisItemStatus.UNCERTAIN):
-        samples.append(
-            {
-                "source": CitationSource.ZJN,
-                "reference": "Članak 207. ZJN",
-                "snippet": (
-                    "Kada se u tehničkoj specifikaciji upućuje na konkretnu marku, mora "
-                    "se dodati riječ „ili jednakovrijedno”."
-                ),
-                "url": "https://narodne-novine.nn.hr/clanci/sluzbeni/2016_12_120_2607.html",
-            }
-        )
+    try:
+        hits = await knowledge_search(item_text, limit=2)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Knowledge search failed, using placeholder citation: %s", exc)
+        return samples
 
-    if item_status == AnalysisItemStatus.FAIL:
+    for hit in hits:
+        snippet = hit.text.strip().replace("\n", " ")
+        if len(snippet) > 320:
+            snippet = snippet[:317] + "…"
         samples.append(
             {
                 "source": CitationSource.DKOM,
-                "reference": "DKOM, KLASA: UP/II-034-02/24-01/123",
-                "snippet": (
-                    "Naručitelj je propustio dopuniti opis klauzulom o jednakovrijednom "
-                    "proizvodu, što je osnova za poništenje postupka."
-                ),
-                "url": None,
-            }
-        )
-
-    if item_status == AnalysisItemStatus.WARN:
-        samples.append(
-            {
-                "source": CitationSource.DKOM,
-                "reference": "DKOM, KLASA: UP/II-034-02/23-04/812",
-                "snippet": (
-                    "Specifikacija mora omogućiti istovjetno tumačenje stavki među "
-                    "ponuditeljima."
-                ),
-                "url": None,
+                "reference": f"DKOM, KLASA: {hit.klasa}",
+                "snippet": snippet,
+                "url": hit.pdf_url,
             }
         )
 
@@ -238,7 +240,7 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             await asyncio.sleep(random.uniform(0.15, 0.45))
             status = _pick_status()
             explanation, suggestion = _explanation_for(status)
-            citations = _mock_citations(status)
+            citations = await _build_citations(status, parsed_item.text)
             stored = await _persist_item(
                 session,
                 analysis_id=analysis_id,

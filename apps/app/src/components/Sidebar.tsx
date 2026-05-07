@@ -10,6 +10,7 @@ const navigation = [
   { href: "/analiza/troskovnik", label: "Analiza troškovnika" },
   { href: "/analiza/don", label: "Analiza DON-a" },
   { href: "/zalbe", label: "Žalbe" },
+  { href: "/pretraga", label: "Pretraga prakse" },
   { href: "/clanci", label: "Članci" },
   { href: "/upute", label: "Upute" },
   { href: "/paketi", label: "Paketi" },
