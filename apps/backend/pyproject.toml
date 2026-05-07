@@ -42,8 +42,17 @@ pdfplumber = "^0.10"
 python-docx = "^1.1"
 openpyxl = "^3.1"
 
-# UI (MVP)
-streamlit = "^1.30"
+# Auth
+bcrypt = "^4.2"
+pyjwt = "^2.10"
+email-validator = "^2.2"
+
+# Streaming
+sse-starlette = "^2.1"
+
+# Scraping
+beautifulsoup4 = "^4.12"
+lxml = "^5.3"
 
 # Utils
 python-dotenv = "^1.0"
