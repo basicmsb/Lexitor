@@ -453,6 +453,17 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** True if `value` carries precision beyond two decimal places. EUR
+ *  amounts shouldn't have a third decimal — values like 7.07423 hidden
+ *  inside a cell that displays as 7.07 are a classic source of
+ *  "računska greška" mismatches between displayed totals and the real
+ *  number Excel uses for downstream sums. */
+function hasMoreThanTwoDecimals(value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  const cents = value * 100;
+  return Math.abs(Math.round(cents) - cents) > 0.005;
+}
+
 function ProvjeraCell({
   isFormula,
   excel,
@@ -464,6 +475,39 @@ function ProvjeraCell({
   computed: number | null;
   hasExcelValue: boolean;
 }) {
+  // Mismatch wins over everything else
+  if (
+    hasExcelValue &&
+    excel !== null &&
+    computed !== null &&
+    excel !== computed
+  ) {
+    return (
+      <span
+        className="text-[#A8392B] text-xs font-medium"
+        title={`Excel: ${formatNumber(excel)} · Lexitor: ${formatNumber(computed)}`}
+      >
+        ✗ {formatNumber(computed)}
+      </span>
+    );
+  }
+
+  // Precision issue (>2 decimals anywhere) — flag even when totals match
+  const precisionIssue =
+    (excel !== null && hasMoreThanTwoDecimals(excel)) ||
+    (computed !== null && hasMoreThanTwoDecimals(computed));
+  if (precisionIssue) {
+    const offending = excel !== null && hasMoreThanTwoDecimals(excel) ? excel : computed;
+    return (
+      <span
+        className="text-[#A8392B] text-xs font-medium"
+        title={`Iznos sadrži više od 2 decimale: ${offending} — moguća računska greška jer cijena u EUR ima 2 decimale.`}
+      >
+        ✗ ra. greška
+      </span>
+    );
+  }
+
   if (isFormula) {
     return <span className="text-[#3F7D45] text-xs">✓ formula</span>;
   }
@@ -480,17 +524,7 @@ function ProvjeraCell({
       </span>
     );
   }
-  if (excel !== null && excel === computed) {
-    return <span className="text-[#3F7D45] text-xs">✓ točno</span>;
-  }
-  return (
-    <span
-      className="text-[#A8392B] text-xs font-medium"
-      title={`Excel: ${formatNumber(excel)} · Lexitor: ${formatNumber(computed)}`}
-    >
-      ✗ {formatNumber(computed)}
-    </span>
-  );
+  return <span className="text-[#3F7D45] text-xs">✓ točno</span>;
 }
 
 function ItemDetail({ item }: { item: AnalysisItemPublic }) {
