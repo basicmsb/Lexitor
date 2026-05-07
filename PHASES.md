@@ -192,18 +192,21 @@
 
 **Demo:** Cijeli flow: upload → analiza → rezultati preko API-ja.
 
-### Sprint 8: Web UI (Streamlit) i Feedback (2 tjedna)
+### Sprint 8: Web UI (Next.js) i Feedback (2-3 tjedna)
 
-- [ ] Streamlit app setup
-- [ ] Login screen (basic)
-- [ ] Upload screen
-- [ ] Rezultati screen sa svim 6 Tier-a
-- [ ] Detaljni panel po stavci
-- [ ] Citation prikaz
+Frontend je **Next.js 14 + Tailwind + shadcn/ui** od dana 1 (preskočili smo Streamlit fazu — vidi DECISIONS D-036).
+
+- [ ] `apps/web` — landing page (lexitor.eu)
+- [ ] `apps/app` — auth required UI (app.lexitor.eu)
+- [ ] Login + register flow (NextAuth.js ili JWT s backend-om)
+- [ ] Upload screen (PDF/XLSX/.arhigonfile drag&drop)
+- [ ] Rezultati screen — lijevo stablo navigacije, desno stavke + Lexitor analiza
+- [ ] Streaming rezultata kroz Server-Sent Events
+- [ ] Citation prikaz s referencama na ZJN/DKOM/VUS
 - [ ] Feedback komponente (Sloj 1, 2, 3)
-- [ ] DKOM auto-tracker (Sloj 4) - osnovna verzija
+- [ ] DKOM auto-tracker (Sloj 4) — osnovna verzija
 
-**Demo:** Korisnik kroz UI: upload → analiza → vidi rezultate → daje feedback.
+**Demo:** Korisnik kroz UI: upload → analiza streama stavku-po-stavku → vidi rezultate → daje feedback.
 
 ### Sprint 9: Evaluacija i tuning (1-2 tjedna)
 

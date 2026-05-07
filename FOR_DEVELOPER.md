@@ -204,80 +204,74 @@ mypy = "^1.8"
 ### Korak 1: Repo setup
 
 ```bash
-# Clone repo
-git clone https://github.com/arhigon/lexitor.git
-cd lexitor
-
-# Pročitaj READMME prije bilo čega
-cat README.md
+git clone https://github.com/basicmsb/Lexitor.git
+cd Lexitor
 ```
 
-### Korak 2: Python environment
+### Korak 2: Backend (Python 3.12 + Poetry)
 
 ```bash
-# Instaliraj Poetry (ako nemaš)
-curl -sSL https://install.python-poetry.org | python3 -
+# Backend živi u apps/backend
+cd apps/backend
 
-# Setup environment
+# Instaliraj Poetry (ako nemaš) — pipx install poetry==1.8.2
 poetry install
-poetry shell
-```
-
-### Korak 3: Lokalni servisi (Docker)
-
-```bash
-# Pokreni PostgreSQL, Redis, Qdrant
-docker compose up -d
-
-# Provjeri da rade
-docker compose ps
-```
-
-### Korak 4: Environment varijable
-
-```bash
-# Kopiraj template
 cp .env.example .env
+# Popuni ANTHROPIC_API_KEY i COHERE_API_KEY
 
-# Popuni sa svojim ključevima:
-# ANTHROPIC_API_KEY=sk-ant-...
-# COHERE_API_KEY=...
-# DATABASE_URL=postgresql://...
-# REDIS_URL=redis://...
-# QDRANT_URL=http://localhost:6333
+cd ../..
+```
+
+### Korak 3: Frontend (Node 20 + pnpm 9)
+
+```bash
+# Iz root foldera
+pnpm install
+```
+
+### Korak 4: Lokalni servisi (Docker)
+
+```bash
+docker compose up -d        # postgres, redis, qdrant
+docker compose ps           # provjera statusa
 ```
 
 ### Korak 5: Migracije
 
 ```bash
-# Pokreni database migracije
-alembic upgrade head
+cd apps/backend
+poetry run alembic upgrade head
+cd ../..
 ```
 
-### Korak 6: Pokreni servis
+### Korak 6: Pokreni sve (3 terminala)
 
+**Terminal 1 — Backend (FastAPI):**
 ```bash
-# API
-uvicorn src.api.main:app --reload --port 8000
-
-# U drugom terminalu - workers
-celery -A src.workers worker --loglevel=info
-
-# U trećem terminalu - UI
-streamlit run src/ui/app.py
+pnpm dev:backend
+# → http://localhost:8000 (i /docs za Swagger)
 ```
+
+**Terminal 2 — Web (lexitor.eu, port 3000):**
+```bash
+pnpm dev:web
+# → http://localhost:3000
+```
+
+**Terminal 3 — App (app.lexitor.eu, port 3001):**
+```bash
+pnpm dev:app
+# → http://localhost:3001
+```
+
+Ili sve odjednom: `pnpm dev` (paralelno).
 
 ### Korak 7: Provjeri da radi
 
 ```bash
-# Health check
-curl http://localhost:8000/health
-
-# Otvori UI
-open http://localhost:8501
-
-# Otvori API docs
-open http://localhost:8000/docs
+curl http://localhost:8000/health          # backend
+curl http://localhost:3000                 # web (landing)
+curl http://localhost:3001/dashboard       # app
 ```
 
 ---

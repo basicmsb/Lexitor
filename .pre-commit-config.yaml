@@ -34,5 +34,6 @@ repos:
         additional_dependencies:
           - pydantic>=2.6
           - pydantic-settings>=2.2
-        args: ["--config-file=pyproject.toml"]
-        exclude: ^(tests/|src/db/migrations/)
+        args: ["--config-file=apps/backend/pyproject.toml"]
+        files: ^apps/backend/src/
+        exclude: ^apps/backend/(tests/|src/db/migrations/)

@@ -1,0 +1,23 @@
+{
+  "name": "lexitor",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Lexitor monorepo — AI asistent za usklađenost javne nabave",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:app": "pnpm --filter app dev",
+    "dev:backend": "cd apps/backend && poetry run uvicorn src.api.main:app --reload --port 8000",
+    "build": "pnpm --filter \"./apps/*\" build",
+    "lint": "pnpm --filter \"./apps/*\" lint",
+    "type-check": "pnpm --filter \"./apps/*\" type-check",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  }
+}

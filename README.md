@@ -384,10 +384,12 @@ Mjesec 24:   2.000 korisnika = 10.000+ analiza
 
 ### Frontend
 
-| Faza | Tehnologija | Razlog |
-|------|-------------|--------|
-| MVP (Faza 1) | Streamlit | Brzi razvoj internog UI-ja |
-| Faza 2+ | Next.js 14 + TailwindCSS | Profesionalan frontend za stvarne korisnike |
+| Komponenta | Tehnologija | Domena | Namjena |
+|------------|-------------|--------|---------|
+| Web (marketing) | Next.js 14 + Tailwind + shadcn/ui | `lexitor.eu` | Landing, blog, moduli, o nama, paketi |
+| App (auth) | Next.js 14 + Tailwind + shadcn/ui | `app.lexitor.eu` | Analiza dokumenata, žalbe, dashboard |
+
+Web i App su **odvojeni Next.js projekti** unutar monorepo-a (pnpm workspaces) — dijele UI komponente i types kroz `packages/`, ali rade na različitim poddomenama radi **origin isolation** (cookies, CSP, 3rd-party scripts).
 
 ### Infrastruktura (Azure)
 
@@ -413,70 +415,70 @@ Mjesec 24:   2.000 korisnika = 10.000+ analiza
 
 ---
 
-## 📂 Struktura repozitorija
+## 📂 Struktura repozitorija (monorepo)
 
 ```
-lexitor/
+lexitor/                       ← root (pnpm workspace + docker-compose)
 ├── README.md                  ← OVDJE STE - glavna ulazna točka
-├── PROJECT.md                 ← Vizija, opseg, ciljne grupe (detaljno)
-├── ARCHITECTURE.md            ← Tehnička arhitektura (detaljno)
-├── PHASES.md                  ← Detaljan fazni plan razvoja
-├── DECISIONS.md               ← Live tracker odluka i otvorenih pitanja
-├── FOR_DEVELOPER.md           ← Brief za informatičara koji se uključuje
+├── PROJECT.md                 ← Vizija, opseg, ciljne grupe
+├── ARCHITECTURE.md            ← Tehnička arhitektura
+├── PHASES.md                  ← Fazni plan razvoja
+├── DECISIONS.md               ← Live tracker odluka
+├── FOR_DEVELOPER.md           ← Brief za developera
+├── DESIGN_BRIEF.md            ← Design smjernice
+│
+├── package.json               ← root pnpm scripts (dev/build/lint)
+├── pnpm-workspace.yaml        ← workspace deklaracija
+├── docker-compose.yml         ← postgres, redis, qdrant
+│
+├── apps/
+│   ├── backend/               ← FastAPI (Python 3.12)
+│   │   ├── pyproject.toml     ← Poetry config
+│   │   ├── alembic.ini
+│   │   ├── .env / .env.example
+│   │   ├── src/
+│   │   │   ├── api/           ← FastAPI endpoints
+│   │   │   ├── core/          ← Analyzer, retriever, generator
+│   │   │   ├── knowledge_base/← Scrapers, embeddings, indexing
+│   │   │   ├── document_parser/← PDF/DOCX/XLSX/.arhigonfile parsing
+│   │   │   ├── feedback/
+│   │   │   ├── models/        ← SQLAlchemy + Pydantic
+│   │   │   ├── workers/       ← Celery
+│   │   │   ├── utils/
+│   │   │   └── db/            ← Session + migrations
+│   │   └── tests/             ← unit / integration / e2e
+│   │
+│   ├── web/                   ← Next.js 14 — lexitor.eu (marketing/public)
+│   │   ├── src/app/           ← Landing, blog, moduli, o nama, paketi
+│   │   ├── tailwind.config.ts
+│   │   └── package.json
+│   │
+│   └── app/                   ← Next.js 14 — app.lexitor.eu (auth required)
+│       ├── src/app/(app)/     ← Dashboard, analiza, žalbe, članci, upute, paketi
+│       ├── tailwind.config.ts
+│       └── package.json
+│
+├── packages/
+│   ├── ui/                    ← Shared React komponente (cn helper, Button, Card…)
+│   ├── types/                 ← Shared TS types (auto-gen iz OpenAPI)
+│   └── config/                ← Shared Tailwind/ESLint config (kasnije)
 │
 ├── docs/                      ← Detaljna dokumentacija
 │   ├── 01-domain-knowledge/   ← Pravna domena, tipovi prekršaja
-│   │   ├── public-procurement-basics.md
-│   │   ├── tier-1-violations.md          ← 6 Tier 1 prekršaja detaljno
-│   │   ├── dkom-decision-structure.md    ← Analiza PDF strukture
-│   │   ├── vus-decision-structure.md
-│   │   └── legal-sources-inventory.md
-│   ├── 02-data-models/        ← JSON sheme, modeli podataka
-│   │   ├── troskovnik-schema.md
-│   │   ├── analysis-result-schema.md
-│   │   ├── feedback-schema.md
-│   │   └── document-templates.md
-│   ├── 03-api/                ← API ugovori
-│   │   ├── api-contract.md
-│   │   ├── webhooks.md
-│   │   └── auth.md
+│   ├── 02-data-models/
+│   ├── 03-api/
 │   ├── 04-prompts/            ← LLM prompts (verzionirani)
-│   │   ├── analyzer-master-prompt.md
-│   │   ├── tier-1-prompts/
-│   │   └── document-generation-prompts/
-│   ├── 05-deployment/         ← Azure setup, CI/CD
-│   │   ├── azure-setup.md
-│   │   ├── ci-cd.md
-│   │   └── monitoring.md
-│   └── 06-roadmap/            ← Detaljna roadmap po fazama
+│   └── 05-deployment/         ← Azure, CI/CD
 │
 ├── data/                      ← Pravna baza (gitignored)
 │   ├── 01-zakoni/             ← ZJN, pravilnici, uredbe
-│   │   ├── zjn/
-│   │   ├── pravilnici/
-│   │   └── uredbe/
-│   ├── 02-dkom-odluke/        ← DKOM rješenja po godinama
-│   │   ├── 2024/
-│   │   ├── 2023/
-│   │   └── ...
-│   ├── 03-vus-presude/        ← VUS odluke
-│   ├── 04-sud-eu/             ← Sud EU presude
-│   ├── 05-templates/          ← Šabloni dokumenata (žalba, odgovor...)
-│   └── 06-strucni-clanci/     ← Stručna literatura (opcionalno)
+│   ├── 02-dkom-odluke/
+│   ├── 03-vus-presude/
+│   ├── 04-sud-eu/
+│   ├── 05-templates/
+│   └── 06-strucni-clanci/
 │
-├── src/                       ← Source kod (Python)
-│   ├── api/                   ← FastAPI endpoints
-│   ├── core/                  ← Core logika (analyzer, retriever, generator)
-│   ├── knowledge_base/        ← Indeksiranje pravne baze
-│   ├── document_parser/       ← PDF/DOCX parsing
-│   ├── feedback/              ← Feedback sustav (4 sloja)
-│   ├── collaboration/         ← Asinkrona kolaboracija
-│   ├── models/                ← Pydantic modeli
-│   └── utils/                 ← Pomoćni alati
-│
-├── tests/                     ← Testovi (unit, integration, e2e)
-├── scripts/                   ← Standalone skripte (scraping, indeksiranje)
-└── deployment/                ← Docker, Azure, GitHub Actions konfiguracija
+└── scripts/                   ← Standalone skripte (scraping, indeksiranje, eval)
 ```
 
 ---

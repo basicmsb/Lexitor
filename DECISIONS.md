@@ -237,12 +237,50 @@ Svaka odluka ima:
 - **Obrazloženje:** Arhigon (vlasnik) već koristi Azure - operativna konzistencija; postojeća ekspertiza.
 - **Implikacije:** Azure-first arhitektura; ali ne lock-in (kontejneri se mogu prebaciti).
 
-#### D-036: UI - Streamlit u MVP, Next.js kasnije
-- **Datum:** 2026-05-06
+#### D-036: UI - Next.js 14 od dana 1 (Streamlit preskočen)
+- **Datum:** 2026-05-07 (revidirano)
 - **Status:** 📌 odlučeno
-- **Odluka:** Streamlit za PoC i internu uporabu (Faza 1A-2). Next.js 14 + TailwindCSS kasnije za pune korisnike (Faza 2-3).
-- **Obrazloženje:** Streamlit = brzi razvoj (1-2 dana za UI); Next.js = profesionalan finalan UI.
-- **Implikacije:** Migracija UI-ja u Fazi 2; backend ostaje isti.
+- **Kontekst:** Inicijalno je plan bio Streamlit za PoC pa Next.js u Fazi 2. Nakon definicije strukture (web + app + blog + moduli + streaming UI), Streamlit ne pokriva potrebe.
+- **Odluka:** **Next.js 14 + Tailwind + shadcn/ui od dana 1.** Bez Streamlit faze.
+- **Obrazloženje:** Streamlit ne radi za SEO landing (lexitor.eu), blog, routing po modulima, ni streaming prikaz analize. Pisanje UI-a dvaput je gubljenje vremena. Brand brief već cilja "Linear/Notion/Vercel feel" — to je Next.js teritorij.
+- **Implikacije:** Početni razvoj malo sporiji, ali ne radimo migraciju kasnije; Frontend tim trči odmah na finalnoj tehnologiji.
+
+#### D-043: Monorepo (pnpm workspaces) struktura
+- **Datum:** 2026-05-07
+- **Status:** 📌 odlučeno
+- **Kontekst:** Trebamo razdvojiti Web (lexitor.eu) i App (app.lexitor.eu), ali dijeliti komponente i types.
+- **Odluka:** Monorepo s **pnpm workspaces**: `apps/backend` (FastAPI), `apps/web` (Next.js marketing), `apps/app` (Next.js auth), `packages/ui`, `packages/types`, `packages/config`.
+- **Obrazloženje:** Code reuse kroz shared packages, jedan git repo, ali nezavisni deploy-i. Standardni pristup za moderne SaaS arhitekture.
+- **Implikacije:** Treba pnpm 9+, Node 20+. Dodatna razina foldera (apps/, packages/) — sav backend kod sad u `apps/backend/`.
+
+#### D-044: Web vs App razdvojeno na poddomene (sigurnost)
+- **Datum:** 2026-05-07
+- **Status:** 📌 odlučeno
+- **Kontekst:** Treba odlučiti između jednog Next.js projekta s route grupama vs dva odvojena projekta na poddomenama.
+- **Odluka:** **Dva odvojena projekta**, deploy na različite poddomene: `lexitor.eu` (web) i `app.lexitor.eu` (app).
+- **Obrazloženje:** Origin isolation — XSS na blogu ne može ukrasti session cookie iz app-a. App može imati strogi CSP bez utjecaja na marketing 3rd-party scripte (GA, Calendly). Pravna dokumentacija = osjetljivi podaci, zaslužuje strogu izolaciju. Industry standard za sigurnosno svjesne SaaS-ove (Stripe, Supabase, Auth0).
+- **Implikacije:** Different origin = treba CORS konfiguracija za API. White-label opcija je lakša (rebrand poddomene).
+
+#### D-045: Streaming analize kroz Server-Sent Events (SSE)
+- **Datum:** 2026-05-07
+- **Status:** 📌 odlučeno
+- **Kontekst:** Korisnik može vidjeti rezultate analize stavku-po-stavku, ne tek nakon završetka.
+- **Odluka:** **Server-Sent Events (SSE)** preko FastAPI EventSourceResponse. Eventi: `item_started`, `item_completed`, `analysis_complete`, `error`.
+- **Obrazloženje:** SSE je jednostavniji od WebSocket-a, dovoljan za jedan smjer (server→klijent), izvorno podržan u browserima (`EventSource` API). FastAPI native podrška kroz `sse-starlette`.
+- **Implikacije:** Trebamo `sse-starlette` package, frontend hook `useEventSource`, fallback na polling za starije browser-e.
+
+#### D-046: Blog i upute u MDX (ne CMS)
+- **Datum:** 2026-05-07
+- **Status:** 📌 odlučeno
+- **Odluka:** Blog (web) i Upute za korištenje (app) pišu se u **MDX** datotekama unutar repa.
+- **Obrazloženje:** Bez CMS troška, developer/PM commitira u git, brzo i jednostavno za PoC fazu. Migracija na headless CMS (Sanity/Contentful) je opcija u fazi komercijalizacije ako non-tech tim počne pisati.
+- **Implikacije:** `@next/mdx` + remark/rehype plugin-ovi, `apps/web/content/blog/*.mdx`, `apps/app/content/upute/*.mdx`.
+
+#### D-047: `.arhigonfile` format — interni Arhigon export
+- **Datum:** 2026-05-07
+- **Status:** 🤔 čeka specifikaciju
+- **Kontekst:** Treba podržati treći upload format pored PDF i XLSX — interni `.arhigonfile` koji se exportira iz Arhigon-Ured aplikacije.
+- **Odluka:** Parser će biti dio `apps/backend/src/document_parser/arhigon_parser.py`, čeka specifikacija formata.
 
 #### D-037: LangChain za RAG orkestraciju
 - **Datum:** 2026-05-06
