@@ -20,13 +20,13 @@ export function Sidebar() {
   const { me, logout } = useAuth();
 
   return (
-    <aside className="w-64 shrink-0 border-r border-slate-200 bg-white min-h-screen flex flex-col">
-      <div className="px-6 py-5 border-b border-slate-200">
-        <Link href="/dashboard" className="font-serif text-2xl font-semibold tracking-tight">
+    <aside className="w-64 shrink-0 border-r border-brand-border bg-surface min-h-screen flex flex-col">
+      <div className="px-6 py-5 border-b border-brand-border">
+        <Link href="/dashboard" className="font-display text-2xl font-semibold tracking-tight text-ink">
           Lexitor
         </Link>
         {me?.project && (
-          <p className="text-xs text-slate-500 mt-1 truncate">{me.project.name}</p>
+          <p className="text-xs text-muted mt-1 truncate">{me.project.name}</p>
         )}
       </div>
 
@@ -38,10 +38,10 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`block px-3 py-2 rounded-md text-sm ${
+                  className={`block px-3 py-2 rounded-md text-sm transition ${
                     active
-                      ? "bg-brand-50 text-brand-900 font-medium"
-                      : "text-slate-700 hover:bg-slate-100"
+                      ? "bg-surface-2 text-ink font-medium"
+                      : "text-navy hover:bg-surface-2 hover:text-ink"
                   }`}
                 >
                   {item.label}
@@ -52,19 +52,19 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      <div className="p-3 border-t border-slate-200">
+      <div className="p-3 border-t border-brand-border">
         {me?.user && (
           <div className="px-3 py-2 mb-2">
-            <p className="text-sm font-medium text-slate-900 truncate">
+            <p className="text-sm font-medium text-ink truncate">
               {me.user.full_name ?? me.user.email}
             </p>
-            <p className="text-xs text-slate-500 truncate">{me.user.email}</p>
+            <p className="text-xs text-muted truncate">{me.user.email}</p>
           </div>
         )}
         <button
           type="button"
           onClick={logout}
-          className="block w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-slate-100"
+          className="block w-full text-left px-3 py-2 rounded-md text-sm text-navy hover:bg-surface-2"
         >
           Odjavi se
         </button>

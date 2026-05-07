@@ -68,12 +68,12 @@ export default function TroskovnikDetailPage() {
   if (!documentId) return null;
 
   if (bootstrapping) {
-    return <p className="text-sm text-slate-500">Pripremam analizu…</p>;
+    return <p className="text-sm text-muted">Pripremam analizu…</p>;
   }
 
   if (bootstrapError) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+      <div className="rounded-lg border border-[#A8392B]/30 bg-[#A8392B]/10 p-4 text-sm text-[#7C2A21]">
         {bootstrapError}
       </div>
     );
@@ -88,18 +88,16 @@ export default function TroskovnikDetailPage() {
           <button
             type="button"
             onClick={() => router.push("/analiza/troskovnik")}
-            className="text-sm text-slate-500 hover:text-slate-700 mb-2"
+            className="text-sm text-muted hover:text-ink mb-2 transition"
           >
             ← Natrag na popis
           </button>
-          <h1 className="font-serif text-2xl font-semibold text-slate-900">
-            {document?.filename ?? "Analiza"}
-          </h1>
+          <h1 className="font-display text-2xl text-ink">{document?.filename ?? "Analiza"}</h1>
         </div>
         <button
           type="button"
           onClick={restart}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:border-slate-400"
+          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-ink transition"
         >
           Pokreni ponovno
         </button>

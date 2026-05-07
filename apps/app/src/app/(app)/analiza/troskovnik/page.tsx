@@ -35,8 +35,8 @@ export default function AnalizaTroskovnikPage() {
   return (
     <div className="max-w-4xl">
       <div className="mb-8">
-        <h1 className="font-serif text-3xl font-semibold mb-2">Analiza troškovnika</h1>
-        <p className="text-slate-600">
+        <h1 className="font-display text-3xl text-ink mb-2">Analiza troškovnika</h1>
+        <p className="text-muted">
           Učitaj PDF, XLSX ili .arhigonfile — Lexitor će analizirati svaku stavku.
         </p>
       </div>
@@ -44,14 +44,14 @@ export default function AnalizaTroskovnikPage() {
       <UploadDropzone documentType="troskovnik" onUploaded={onUploaded} />
 
       <div className="mt-10">
-        <h2 className="text-lg font-semibold text-slate-900 mb-3">Nedavno učitano</h2>
+        <h2 className="text-lg font-semibold text-ink mb-3">Nedavno učitano</h2>
         {error && (
-          <p className="text-sm text-status-fail bg-red-50 border border-red-100 rounded-md px-3 py-2 mb-3">
+          <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2 mb-3">
             {error}
           </p>
         )}
         {loading ? (
-          <p className="text-sm text-slate-500">Učitavam…</p>
+          <p className="text-sm text-muted">Učitavam…</p>
         ) : (
           <DocumentList documents={documents} />
         )}

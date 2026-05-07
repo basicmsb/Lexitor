@@ -28,25 +28,25 @@ function formatDate(iso: string): string {
 
 export function DocumentList({ documents, emptyHint = "Još nema učitanih dokumenata." }: Props) {
   if (documents.length === 0) {
-    return <p className="text-sm text-slate-500 italic">{emptyHint}</p>;
+    return <p className="text-sm text-muted italic">{emptyHint}</p>;
   }
 
   return (
-    <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+    <ul className="divide-y divide-brand-border rounded-lg border border-brand-border bg-white">
       {documents.map((doc) => (
         <li key={doc.id}>
           <Link
             href={`/analiza/${doc.document_type === "don" ? "don" : "troskovnik"}/${doc.id}`}
-            className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-slate-50"
+            className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-surface-2 transition"
           >
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900 truncate">{doc.filename}</p>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-sm font-medium text-ink truncate">{doc.filename}</p>
+              <p className="text-xs text-muted mt-0.5">
                 {TYPE_LABEL[doc.document_type] ?? doc.document_type} ·{" "}
                 {formatBytes(doc.size_bytes)} · {formatDate(doc.created_at)}
               </p>
             </div>
-            <span className="text-xs text-brand-700 shrink-0">Otvori →</span>
+            <span className="text-xs text-signal shrink-0">Otvori →</span>
           </Link>
         </li>
       ))}

@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
-import { Inter, Source_Serif_4, JetBrains_Mono } from "next/font/google";
+import {
+  Fraunces,
+  Inter,
+  Instrument_Serif,
+  JetBrains_Mono,
+  Source_Serif_4,
+} from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/auth-context";
 
@@ -13,6 +19,19 @@ const serif = Source_Serif_4({
   subsets: ["latin", "latin-ext"],
   variable: "--font-serif",
   display: "swap",
+});
+
+const display = Fraunces({
+  subsets: ["latin", "latin-ext"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const accent = Instrument_Serif({
+  subsets: ["latin", "latin-ext"],
+  variable: "--font-accent",
+  display: "swap",
+  weight: "400",
 });
 
 const mono = JetBrains_Mono({
@@ -39,9 +58,9 @@ export default function RootLayout({
   return (
     <html
       lang="hr"
-      className={`${sans.variable} ${serif.variable} ${mono.variable}`}
+      className={`${sans.variable} ${serif.variable} ${display.variable} ${accent.variable} ${mono.variable}`}
     >
-      <body className="font-sans antialiased bg-slate-50">
+      <body className="font-sans antialiased bg-surface text-ink">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

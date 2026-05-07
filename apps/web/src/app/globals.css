@@ -3,12 +3,27 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
+  --color-surface: #FAFAF8;
+  --color-surface-2: #F2F2EE;
+  --color-ink: #0B1320;
+  --color-navy: #1A2332;
+  --color-muted: #6B7587;
+  --color-signal: #3B82C4;
+  --color-gold: #B8893E;
+  --color-border: #E0E0DA;
 }
 
 html,
 body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: rgba(59, 130, 196, 0.2);
 }

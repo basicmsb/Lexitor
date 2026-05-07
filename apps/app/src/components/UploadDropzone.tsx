@@ -67,14 +67,14 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
         onClick={() => !uploading && inputRef.current?.click()}
         className={`rounded-lg border-2 border-dashed p-12 text-center cursor-pointer transition ${
           dragging
-            ? "border-brand-500 bg-brand-50"
-            : "border-slate-300 bg-white hover:border-slate-400"
+            ? "border-signal bg-signal/5"
+            : "border-brand-border bg-white hover:border-navy"
         } ${uploading ? "opacity-60 pointer-events-none" : ""}`}
       >
-        <p className="font-medium text-slate-900">
+        <p className="font-medium text-ink">
           {uploading ? "Učitavam…" : "Povuci datoteku ovdje ili klikni za odabir"}
         </p>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-2 text-sm text-muted">
           Podržani formati: <code className="font-mono">.pdf</code>,{" "}
           <code className="font-mono">.xlsx</code>,{" "}
           <code className="font-mono">.arhigonfile</code> · maks. 50 MB
@@ -89,7 +89,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
         />
       </div>
       {error && (
-        <p className="text-sm text-status-fail bg-red-50 border border-red-100 rounded-md px-3 py-2">
+        <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
           {error}
         </p>
       )}

@@ -1,55 +1,72 @@
 import type { AnalysisItemStatus } from "@/lib/types";
 
-const STYLES: Record<AnalysisItemStatus, { label: string; bg: string; text: string; dot: string }> = {
+const STYLES: Record<
+  AnalysisItemStatus,
+  { label: string; description: string; bgClass: string; textClass: string; dotHex: string }
+> = {
   ok: {
     label: "Usklađeno",
-    bg: "bg-green-50 border-green-200",
-    text: "text-green-800",
-    dot: "bg-status-ok",
+    description: "Sustav nije našao problem.",
+    bgClass: "bg-[#3F7D45]/10 border-[#3F7D45]/30",
+    textClass: "text-[#2C5832]",
+    dotHex: "#3F7D45",
   },
   warn: {
     label: "Upozorenje",
-    bg: "bg-yellow-50 border-yellow-200",
-    text: "text-yellow-800",
-    dot: "bg-status-warn",
+    description: "Mogući problem, vrijedi pregled.",
+    bgClass: "bg-[#A87F2E]/10 border-[#A87F2E]/30",
+    textClass: "text-[#7A5D22]",
+    dotHex: "#A87F2E",
   },
   fail: {
     label: "Kršenje",
-    bg: "bg-red-50 border-red-200",
-    text: "text-red-800",
-    dot: "bg-status-fail",
-  },
-  neutral: {
-    label: "Nije provjereno",
-    bg: "bg-slate-50 border-slate-200",
-    text: "text-slate-700",
-    dot: "bg-status-neutral",
-  },
-  accepted: {
-    label: "Prihvaćen rizik",
-    bg: "bg-blue-50 border-blue-200",
-    text: "text-blue-800",
-    dot: "bg-status-accepted",
+    description: "Visoka vjerojatnost kršenja ZJN-a.",
+    bgClass: "bg-[#A8392B]/10 border-[#A8392B]/30",
+    textClass: "text-[#7C2A21]",
+    dotHex: "#A8392B",
   },
   uncertain: {
     label: "Pravna nesigurnost",
-    bg: "bg-purple-50 border-purple-200",
-    text: "text-purple-800",
-    dot: "bg-status-uncertain",
+    description: "Suprotni presedani DKOM/VUS.",
+    bgClass: "bg-[#6B4A8E]/10 border-[#6B4A8E]/30",
+    textClass: "text-[#503770]",
+    dotHex: "#6B4A8E",
+  },
+  accepted: {
+    label: "Prihvaćen rizik",
+    description: "Korisnik svjesno prihvatio.",
+    bgClass: "bg-[#2A6DB0]/10 border-[#2A6DB0]/30",
+    textClass: "text-[#1F5083]",
+    dotHex: "#2A6DB0",
+  },
+  neutral: {
+    label: "Nije provjereno",
+    description: "Nije bilo u opsegu analize.",
+    bgClass: "bg-[#7B7363]/10 border-[#7B7363]/30",
+    textClass: "text-[#5A5447]",
+    dotHex: "#7B7363",
   },
 };
 
 export function StatusDot({ status }: { status: AnalysisItemStatus }) {
-  return <span className={`inline-block w-2 h-2 rounded-full ${STYLES[status].dot}`} />;
+  const s = STYLES[status];
+  return (
+    <span
+      aria-hidden
+      className="inline-block w-2 h-2 rounded-full"
+      style={{ backgroundColor: s.dotHex }}
+    />
+  );
 }
 
 export function StatusBadge({ status }: { status: AnalysisItemStatus }) {
   const s = STYLES[status];
   return (
     <span
-      className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium ${s.bg} ${s.text}`}
+      className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium ${s.bgClass} ${s.textClass}`}
+      title={s.description}
     >
-      <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.dotHex }} />
       {s.label}
     </span>
   );
@@ -57,4 +74,8 @@ export function StatusBadge({ status }: { status: AnalysisItemStatus }) {
 
 export function statusLabel(status: AnalysisItemStatus): string {
   return STYLES[status].label;
+}
+
+export function statusDescription(status: AnalysisItemStatus): string {
+  return STYLES[status].description;
 }

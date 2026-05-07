@@ -33,37 +33,31 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
+    <main className="min-h-screen flex items-center justify-center bg-surface text-ink px-4 py-10">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Link href="/" className="font-serif text-3xl font-semibold tracking-tight">
+        <div className="text-center mb-10">
+          <Link href="/" className="font-display text-3xl font-semibold tracking-tight text-ink">
             Lexitor
           </Link>
-          <p className="mt-2 text-sm text-slate-600">Kreiraj radni prostor</p>
+          <p className="mt-2 text-sm text-muted">Kreiraj radni prostor</p>
         </div>
 
         <form
           onSubmit={onSubmit}
-          className="bg-white border border-slate-200 rounded-lg p-8 space-y-5"
+          className="bg-white border border-brand-border rounded-lg p-8 space-y-5"
         >
-          <div>
-            <label htmlFor="full_name" className="block text-sm font-medium text-slate-700">
-              Ime i prezime
-            </label>
+          <Field label="Ime i prezime" htmlFor="full_name">
             <input
               id="full_name"
               type="text"
               autoComplete="name"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2 border"
+              className={inputClass}
             />
-          </div>
+          </Field>
 
-          <div>
-            <label htmlFor="project_name" className="block text-sm font-medium text-slate-700">
-              Naziv tvrtke / radnog prostora
-            </label>
+          <Field label="Naziv tvrtke / radnog prostora" htmlFor="project_name">
             <input
               id="project_name"
               type="text"
@@ -72,14 +66,11 @@ export default function RegisterPage() {
               maxLength={255}
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
-              className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2 border"
+              className={inputClass}
             />
-          </div>
+          </Field>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-              Email
-            </label>
+          <Field label="Email" htmlFor="email">
             <input
               id="email"
               type="email"
@@ -87,14 +78,11 @@ export default function RegisterPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2 border"
+              className={inputClass}
             />
-          </div>
+          </Field>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-              Lozinka <span className="text-slate-400 text-xs">(min. 8 znakova)</span>
-            </label>
+          <Field label="Lozinka" hint="min. 8 znakova" htmlFor="password">
             <input
               id="password"
               type="password"
@@ -104,12 +92,12 @@ export default function RegisterPage() {
               maxLength={128}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 px-3 py-2 border"
+              className={inputClass}
             />
-          </div>
+          </Field>
 
           {error && (
-            <p className="text-sm text-status-fail bg-red-50 border border-red-100 rounded-md px-3 py-2">
+            <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
               {error}
             </p>
           )}
@@ -117,19 +105,44 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-md bg-brand-900 px-4 py-2.5 text-white font-medium hover:bg-brand-700 disabled:opacity-50"
+            className="w-full rounded-md bg-ink px-4 py-2.5 text-surface font-medium hover:bg-navy transition disabled:opacity-50"
           >
             {submitting ? "Registriram…" : "Registriraj se"}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-600">
+        <p className="mt-6 text-center text-sm text-muted">
           Već imate račun?{" "}
-          <Link href="/login" className="text-brand-700 hover:underline font-medium">
+          <Link href="/login" className="text-signal hover:underline font-medium">
             Prijavi se
           </Link>
         </p>
       </div>
     </main>
+  );
+}
+
+const inputClass =
+  "mt-1 block w-full rounded-md border border-brand-border bg-white shadow-sm focus:border-signal focus:ring-2 focus:ring-signal/20 px-3 py-2 outline-none transition";
+
+function Field({
+  label,
+  hint,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-navy">
+        {label}
+        {hint && <span className="ml-2 text-xs text-muted">({hint})</span>}
+      </label>
+      {children}
+    </div>
   );
 }
