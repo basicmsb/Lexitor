@@ -12,7 +12,7 @@
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "dev:web": "pnpm --filter web dev",
     "dev:app": "pnpm --filter app dev",
-    "dev:backend": "cd apps/backend && poetry run uvicorn src.api.main:app --reload --port 8000",
+    "dev:backend": "cd apps/backend && poetry run python run.py",
     "build": "pnpm --filter \"./apps/*\" build",
     "lint": "pnpm --filter \"./apps/*\" lint",
     "type-check": "pnpm --filter \"./apps/*\" type-check",
