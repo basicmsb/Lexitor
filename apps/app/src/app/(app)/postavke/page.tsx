@@ -12,6 +12,8 @@ export default function PostavkePage() {
   const [err, setErr] = useState<string | null>(null);
   const [logoCacheBuster, setLogoCacheBuster] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +43,27 @@ export default function PostavkePage() {
       setErr(e instanceof Error ? e.message : "Upload nije uspio.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onExportLabels = async () => {
+    setExportBusy(true);
+    setExportErr(null);
+    try {
+      const blob = await api.exportLabels();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `lexitor-labels-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : "Export nije uspio.");
+    } finally {
+      setExportBusy(false);
     }
   };
 
@@ -140,6 +163,30 @@ export default function PostavkePage() {
         {err && (
           <p className="mt-3 text-sm text-[#A8392B]" aria-live="polite">
             {err}
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-brand-border bg-white p-6">
+        <h2 className="font-display text-lg text-ink mb-1">Označeni primjeri</h2>
+        <p className="text-sm text-muted mb-4">
+          Izvoz svih stavki na kojima si označio nalaze (✓ Točno / ✗ Pogrešno)
+          ili dodao ručne nalaze. Materijal služi kao few-shot primjeri za
+          treniranje LLM analyzera.
+        </p>
+
+        <button
+          type="button"
+          disabled={exportBusy}
+          onClick={onExportLabels}
+          className="rounded-md border border-brand-border bg-white px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
+        >
+          {exportBusy ? "Pripremam…" : "Preuzmi JSON"}
+        </button>
+
+        {exportErr && (
+          <p className="mt-3 text-sm text-[#A8392B]" aria-live="polite">
+            {exportErr}
           </p>
         )}
       </section>

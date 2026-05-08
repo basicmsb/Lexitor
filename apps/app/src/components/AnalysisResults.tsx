@@ -7,9 +7,11 @@ import { StatusDot, statusAccent, statusLabel } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type {
   AnalysisItemPublic,
+  AnalysisItemStatus,
   AnalysisStatus,
   AnalysisSummary,
   CitationPublic,
+  UserAddedFinding,
   UserVerdict,
 } from "@/lib/types";
 
@@ -1330,6 +1332,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
         {findings.map((f, idx) => (
           <FindingCard key={idx} {...f} />
         ))}
+        <UserAddedFindingsBlock item={item} />
       </div>
     </div>
   );
@@ -1633,5 +1636,228 @@ function Section({
       </h3>
       <p className="text-sm text-navy leading-relaxed">{children}</p>
     </section>
+  );
+}
+
+const USER_FINDING_KINDS: Array<{ value: string; label: string }> = [
+  { value: "brand_lock", label: "Brand bez \"ili jednakovrijedno\"" },
+  { value: "vague_opis", label: "Nejasan / preopćenit opis" },
+  { value: "dkom_pattern", label: "Formulacija protivna DKOM praksi" },
+  { value: "arithmetic_mismatch", label: "Neslaganje količine/cijene/iznosa" },
+  { value: "missing_info", label: "Nedostaju ključni podaci" },
+  { value: "legal_violation", label: "Povreda ZJN-a" },
+  { value: "custom", label: "Drugo (opiši u komentaru)" },
+];
+
+function findingKindLabel(kind: string): string {
+  const found = USER_FINDING_KINDS.find((k) => k.value === kind);
+  return found ? found.label : kind;
+}
+
+/** Korisnik može dodati nalaz koji je LA propustio (false negative).
+ *  Ovi se primjeri kasnije izvoze kao few-shot material za LLM prompt. */
+function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
+  const analysisId = useContext(AnalysisIdContext);
+  const [findings, setFindings] = useState<UserAddedFinding[]>(
+    item.user_added_findings ?? [],
+  );
+  const [showForm, setShowForm] = useState(false);
+  const [kind, setKind] = useState<string>("brand_lock");
+  const [statusValue, setStatusValue] = useState<AnalysisItemStatus>("warn");
+  const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFindings(item.user_added_findings ?? []);
+  }, [item.id, item.user_added_findings]);
+
+  const resetForm = () => {
+    setShowForm(false);
+    setKind("brand_lock");
+    setStatusValue("warn");
+    setComment("");
+    setError(null);
+  };
+
+  const onSubmit = async () => {
+    if (!analysisId) return;
+    if (!comment.trim()) {
+      setError("Komentar je obavezan.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api.addUserFinding(analysisId, item.id, {
+        kind,
+        status: statusValue,
+        comment: comment.trim(),
+      });
+      setFindings(updated.user_added_findings ?? []);
+      resetForm();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Greška pri spremanju.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    if (!analysisId) return;
+    try {
+      const updated = await api.deleteUserFinding(analysisId, item.id, id);
+      setFindings(updated.user_added_findings ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Greška pri brisanju.");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {findings.map((f) => {
+        const accent = statusAccent(f.status);
+        return (
+          <article
+            key={f.id}
+            className="rounded-lg border border-dashed bg-white p-5 border-l-4"
+            style={{ borderLeftColor: accent, borderColor: accent + "55" }}
+          >
+            <header className="flex items-start justify-between gap-3 mb-3">
+              <span
+                className="inline-flex items-center gap-2 text-xs uppercase tracking-wider font-semibold"
+                style={{ color: accent }}
+              >
+                <span
+                  aria-hidden
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: accent }}
+                />
+                {statusLabel(f.status)}
+              </span>
+              <span className="text-[11px] uppercase tracking-[0.18em] font-medium text-muted">
+                Korisnikov nalaz
+              </span>
+            </header>
+
+            <div className="mb-2 text-[11px] uppercase tracking-wider text-muted font-semibold">
+              {findingKindLabel(f.kind)}
+            </div>
+            <p className="text-sm text-navy leading-relaxed whitespace-pre-line">
+              {f.comment}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => onDelete(f.id)}
+              className="mt-3 text-[11px] text-muted hover:text-[#A8392B] transition"
+            >
+              ✗ Ukloni nalaz
+            </button>
+          </article>
+        );
+      })}
+
+      {showForm ? (
+        <div className="rounded-lg border border-dashed border-brand-border bg-white p-5 space-y-3">
+          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
+            Novi nalaz koji je LA propustio
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
+              Vrsta nalaza
+            </label>
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy focus:outline-none focus:border-ink"
+            >
+              {USER_FINDING_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
+              Težina
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStatusValue("warn")}
+                aria-pressed={statusValue === "warn"}
+                className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition ${
+                  statusValue === "warn"
+                    ? "border-[#B8893E] bg-[#B8893E]/10 text-[#7A5A28] font-medium"
+                    : "border-brand-border text-navy hover:border-ink"
+                }`}
+              >
+                Upozorenje
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusValue("fail")}
+                aria-pressed={statusValue === "fail"}
+                className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition ${
+                  statusValue === "fail"
+                    ? "border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium"
+                    : "border-brand-border text-navy hover:border-ink"
+                }`}
+              >
+                Ozbiljna greška
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
+              Komentar <span className="text-[#A8392B] normal-case">obavezno</span>
+            </label>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+              placeholder="Što je LA trebao prijaviti i zašto?"
+              className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
+            />
+          </div>
+
+          {error && (
+            <p className="text-[11px] text-[#A8392B]">{error}</p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={saving}
+              className="rounded-md bg-ink px-3 py-1.5 text-sm text-white hover:bg-navy transition disabled:opacity-50"
+            >
+              {saving ? "Spremam…" : "Spremi nalaz"}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              disabled={saving}
+              className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
+            >
+              Odustani
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="rounded-lg border border-dashed border-brand-border bg-white/60 px-4 py-3 text-sm text-muted hover:text-ink hover:border-ink transition"
+        >
+          + Dodaj nalaz koji je LA propustio
+        </button>
+      )}
+    </div>
   );
 }

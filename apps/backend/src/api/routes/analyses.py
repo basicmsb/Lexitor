@@ -4,10 +4,12 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import CurrentUser, DbSession
@@ -17,6 +19,7 @@ from src.api.schemas.analysis import (
     AnalysisItemPublic,
     AnalysisPublic,
     StartAnalysisResponse,
+    UserAddedFindingCreate,
 )
 from src.core.analyzer import run_mock_analysis
 from src.core.events import bus
@@ -250,6 +253,109 @@ async def update_item_feedback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Komentar je obavezan kad je nalaz označen kao pogrešan.",
         )
+
+    await session.commit()
+    await session.refresh(item, attribute_names=["citations"])
+    return AnalysisItemPublic.model_validate(item)
+
+
+async def _load_item_or_403(
+    analysis_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> AnalysisItem:
+    """Shared guard for /analyses/{id}/items/{item_id}/* endpoints.
+    Raises 404/403 as appropriate; otherwise returns the AnalysisItem
+    eager-loaded with citations."""
+    stmt = (
+        select(AnalysisItem)
+        .where(AnalysisItem.id == item_id, AnalysisItem.analysis_id == analysis_id)
+        .options(selectinload(AnalysisItem.citations))
+    )
+    result = await session.execute(stmt)
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Stavka nije pronađena."
+        )
+    analysis = await session.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analiza nije pronađena."
+        )
+    document = await session.get(Document, analysis.document_id)
+    if document is None or document.project_id != current_user.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Nemaš pristup analizi."
+        )
+    return item
+
+
+@router.post(
+    "/analyses/{analysis_id}/items/{item_id}/user-findings",
+    response_model=AnalysisItemPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_user_finding(
+    analysis_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: UserAddedFindingCreate,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> AnalysisItemPublic:
+    """Append a user-added nalaz on a stavka (false-negative labelling).
+    Each entry gets a server-generated UUID + timestamp so it can be
+    individually deleted and so the export endpoint has stable ordering."""
+    item = await _load_item_or_403(analysis_id, item_id, current_user, session)
+
+    comment = payload.comment.strip()
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Komentar je obavezan kod ručno dodanog nalaza.",
+        )
+
+    new_entry = {
+        "id": str(uuid.uuid4()),
+        "kind": payload.kind.strip() or "custom",
+        "status": payload.status.value,
+        "comment": comment,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    existing = list(item.user_added_findings or [])
+    existing.append(new_entry)
+    item.user_added_findings = existing
+    flag_modified(item, "user_added_findings")
+
+    await session.commit()
+    await session.refresh(item, attribute_names=["citations"])
+    return AnalysisItemPublic.model_validate(item)
+
+
+@router.delete(
+    "/analyses/{analysis_id}/items/{item_id}/user-findings/{finding_id}",
+    response_model=AnalysisItemPublic,
+)
+async def delete_user_finding(
+    analysis_id: uuid.UUID,
+    item_id: uuid.UUID,
+    finding_id: str,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> AnalysisItemPublic:
+    """Remove a user-added nalaz by its UUID. 404 if no entry matches."""
+    item = await _load_item_or_403(analysis_id, item_id, current_user, session)
+
+    existing = list(item.user_added_findings or [])
+    filtered = [f for f in existing if f.get("id") != finding_id]
+    if len(filtered) == len(existing):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Nalaz nije pronađen."
+        )
+    item.user_added_findings = filtered or None
+    flag_modified(item, "user_added_findings")
 
     await session.commit()
     await session.refresh(item, attribute_names=["citations"])

@@ -49,6 +49,26 @@ class FindingPublic(BaseModel):
     citations: list[FindingCitation] = []
 
 
+class UserAddedFinding(BaseModel):
+    """A nalaz that the user added manually because the analyzer missed
+    it (false negative). Used both as the API response shape and the
+    JSONB serialization shape on analysis_items.user_added_findings."""
+
+    id: str  # uuid string, generated server-side on create
+    kind: str  # "brand_lock" | "vague_opis" | "dkom_pattern" | "missing_jm" | … | "custom"
+    status: AnalysisItemStatus  # warn or fail (UI restricts; server accepts the enum)
+    comment: str
+    created_at: str  # ISO datetime string
+
+
+class UserAddedFindingCreate(BaseModel):
+    """Request body for POST /analyses/{id}/items/{item_id}/user-findings."""
+
+    kind: str
+    status: AnalysisItemStatus
+    comment: str
+
+
 class AnalysisItemPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,6 +86,7 @@ class AnalysisItemPublic(BaseModel):
     user_verdict: UserVerdict | None = None
     user_comment: str | None = None
     include_in_pdf: bool = True
+    user_added_findings: list[UserAddedFinding] | None = None
 
 
 class AnalysisItemFeedbackUpdate(BaseModel):

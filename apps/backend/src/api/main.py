@@ -9,6 +9,7 @@ from src.api.routes import analyses as analyses_routes
 from src.api.routes import auth as auth_routes
 from src.api.routes import documents as documents_routes
 from src.api.routes import knowledge as knowledge_routes
+from src.api.routes import labels as labels_routes
 from src.api.routes import projects as projects_routes
 from src.db.session import SessionLocal
 from src.models import Analysis, AnalysisStatus
@@ -60,6 +61,7 @@ app.include_router(documents_routes.router)
 app.include_router(analyses_routes.router)
 app.include_router(knowledge_routes.router)
 app.include_router(projects_routes.router)
+app.include_router(labels_routes.router)
 
 
 @app.get("/health", tags=["health"])

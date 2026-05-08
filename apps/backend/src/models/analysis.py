@@ -119,6 +119,11 @@ class AnalysisItem(Base, TimestampMixin):
     include_in_pdf: Mapped[bool] = mapped_column(
         nullable=False, default=True, server_default="true",
     )
+    # User-added findings — things the analyzer missed. Each entry is a
+    # dict {id, kind, status, comment, created_at}. Kept separate from
+    # `findings` (analyzer output) so the export endpoint can label them
+    # as "LA propustio" (missed) vs "LA pronašao + verdict".
+    user_added_findings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     analysis: Mapped[Analysis] = relationship(back_populates="items")
     citations: Mapped[list[Citation]] = relationship(
