@@ -3,6 +3,7 @@ from src.models.analysis import (
     AnalysisItem,
     AnalysisItemStatus,
     AnalysisStatus,
+    UserVerdict,
 )
 from src.models.citation import Citation, CitationSource
 from src.models.document import Document, DocumentType
@@ -21,4 +22,5 @@ __all__ = [
     "Project",
     "User",
     "UserRole",
+    "UserVerdict",
 ]

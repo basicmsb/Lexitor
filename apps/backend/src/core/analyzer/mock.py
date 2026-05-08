@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.analyzer.rules import run_per_row_rules
 from src.core.events import bus
 from src.db.session import SessionLocal
 from src.document_parser import parse_document
@@ -199,6 +200,54 @@ def _text_has_brand_signal(item_text: str) -> bool:
     return False
 
 
+_EQUIVALENT_RE = re.compile(
+    # All Croatian forms of "jednakovrijedan" share the stem
+    # "jednakovrijed" — masculine ("an"), feminine ("na"), neuter
+    # ("no"), and inflected forms ("nu", "ne", "nih", "nim", "nom",
+    # "noj", "nog", "nima") all follow. Match anywhere after "ili".
+    r"\bili\s+jednakovrij?ed[a-zčćžšđ]{0,5}\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_brand_mentions(item_text: str) -> tuple[str, str] | None:
+    """Deterministic brand check: if `item_text` names a manufacturer or
+    contains a brand-locking phrase ("tipa kao", "kao npr.") without a
+    nearby "ili jednakovrijedno" disclaimer, return (explanation,
+    suggestion). Returns None when there's no brand signal or when
+    "ili jednakovrijedno" already accompanies it.
+
+    Used to flag brand mentions inside opci_uvjeti rows where stavka-style
+    random mock doesn't apply but real brand-locking can still happen."""
+    if not item_text:
+        return None
+    found: list[str] = []
+    for m in _BRAND_RE.finditer(item_text):
+        name = m.group(0)
+        if name and name not in found:
+            found.append(name)
+    for m in _PHRASE_RE.finditer(item_text):
+        captured = m.group(1).strip().rstrip(",.;:!?") if m.group(1) else ""
+        if captured and captured not in found:
+            found.append(captured)
+    if not found:
+        return None
+    if _EQUIVALENT_RE.search(item_text):
+        # Brand named, but with the "ili jednakovrijedno" clause — OK.
+        return None
+    brands_text = ", ".join(f"„{b}”" for b in found)
+    explanation = (
+        f"U tekstu je naveden proizvođač / marka {brands_text} bez dodatka "
+        f"„ili jednakovrijedno”. ZJN članak 207. zahtijeva neutralnu "
+        f"specifikaciju ili izričitu klauzulu o jednakovrijednosti."
+    )
+    suggestion = (
+        "Razmotriti dopunu opisa neutralnim parametrima ili dodati "
+        "klauzulu „ili jednakovrijedno”."
+    )
+    return explanation, suggestion
+
+
 def _has_more_than_two_decimals(value: Any) -> bool:
     if value is None or value == "":
         return False
@@ -218,6 +267,55 @@ def _format_eur(value: Any) -> str:
     except (TypeError, ValueError):
         return str(value)
     return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " EUR"
+
+
+def _detect_recap_line_issues(
+    parsed_metadata: dict[str, Any] | None,
+) -> tuple[list[str], list[str], AnalysisItemStatus] | None:
+    """Validate a recap_line's cross-sheet references against the
+    document-wide registry of UKUPNO rows. The parser pre-computed
+    ref_validation entries; we just translate them to status + messages."""
+    if not parsed_metadata or parsed_metadata.get("kind") != "recap_line":
+        return None
+    validation: list[dict[str, Any]] = parsed_metadata.get("ref_validation") or []
+    if not validation:
+        return None
+
+    problems: list[str] = []
+    suggestions: list[str] = []
+    status = AnalysisItemStatus.OK
+
+    for v in validation:
+        v_status = v.get("validation_status")
+        if v_status == "fail":
+            problems.append(v.get("message", "Neispravna cross-sheet referenca."))
+            status = AnalysisItemStatus.FAIL
+        elif v_status == "warn":
+            problems.append(v.get("message", "Neprepoznata referenca."))
+            if status != AnalysisItemStatus.FAIL:
+                status = AnalysisItemStatus.WARN
+
+    if status == AnalysisItemStatus.OK:
+        return None
+
+    kinds = {v.get("validation_kind") for v in validation}
+    if "math_row" in kinds:
+        suggestions.append(
+            "Promijeniti referencu da pokazuje na UKUPNO red odgovarajućeg "
+            "sheeta umjesto na pojedinačnu math stavku."
+        )
+    if "missing_sheet" in kinds:
+        suggestions.append(
+            "Provjeriti naziv sheeta u formuli — sheet ne postoji ili je "
+            "preimenovan."
+        )
+    if "unknown" in kinds:
+        suggestions.append(
+            "Provjeriti red u referenci — vjerojatno pokazuje na praznu "
+            "ćeliju ili pomoćni red bez UKUPNO oznake."
+        )
+
+    return problems, suggestions, status
 
 
 def _detect_group_sum_issues(
@@ -359,21 +457,31 @@ def _detect_arithmetic_issues(
     return problems, sorted(suggestions)
 
 
+def _enum_str(value: Any) -> Any:
+    """Return Enum's .value when present, else fall through unchanged.
+    Defensive helper for SA columns whose hydrated type may vary."""
+    return value.value if hasattr(value, "value") else value
+
+
 def _serialize_item(item: AnalysisItem, citations: list[Citation]) -> dict[str, Any]:
     return {
         "id": str(item.id),
         "position": item.position,
         "label": item.label,
         "text": item.text,
-        "status": item.status.value,
+        "status": _enum_str(item.status),
         "explanation": item.explanation,
         "suggestion": item.suggestion,
         "metadata_json": item.metadata_json,
         "highlights": item.highlights,
+        "findings": item.findings,
+        "user_verdict": _enum_str(item.user_verdict) if item.user_verdict else None,
+        "user_comment": item.user_comment,
+        "include_in_pdf": item.include_in_pdf,
         "citations": [
             {
                 "id": str(c.id),
-                "source": c.source.value,
+                "source": _enum_str(c.source),
                 "reference": c.reference,
                 "snippet": c.snippet,
                 "url": c.url,
@@ -383,44 +491,234 @@ def _serialize_item(item: AnalysisItem, citations: list[Citation]) -> dict[str, 
     }
 
 
+# Severity rank for picking the worst finding as item-level status.
+# Higher = more severe; OK is treated as 0 so any real finding wins.
+_SEVERITY_RANK: dict[str, int] = {
+    AnalysisItemStatus.OK.value: 0,
+    AnalysisItemStatus.NEUTRAL.value: 0,
+    AnalysisItemStatus.ACCEPTED.value: 1,
+    AnalysisItemStatus.UNCERTAIN.value: 2,
+    AnalysisItemStatus.WARN.value: 3,
+    AnalysisItemStatus.FAIL.value: 4,
+}
+
+
+def _aggregate_status(findings: list[dict[str, Any]]) -> AnalysisItemStatus:
+    """Item-level status = most severe finding's status. Used to drive
+    the sidebar dot colour and summary counters."""
+    if not findings:
+        return AnalysisItemStatus.OK
+    worst_value = max(
+        (f.get("status") for f in findings),
+        key=lambda s: _SEVERITY_RANK.get(s or "", 0),
+    )
+    try:
+        return AnalysisItemStatus(worst_value)
+    except ValueError:
+        return AnalysisItemStatus.OK
+
+
 async def _persist_item(
     session: AsyncSession,
     *,
     analysis_id: uuid.UUID,
     parsed: ParsedItem,
-    status: AnalysisItemStatus,
-    explanation: str | None,
-    suggestion: str | None,
-    citations: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
     highlights: list[dict[str, Any]],
 ) -> tuple[AnalysisItem, list[Citation]]:
+    """Persist an item with its findings list. Item-level
+    explanation/suggestion/status are derived from the highest-severity
+    finding (legacy compat — frontend prefers the findings array)."""
+    primary = findings[0] if findings else None
+    aggregate = _aggregate_status(findings)
     item = AnalysisItem(
         analysis_id=analysis_id,
         position=parsed.position,
         label=parsed.label,
         text=parsed.text,
-        status=status,
-        explanation=explanation,
-        suggestion=suggestion,
+        status=aggregate,
+        explanation=primary.get("explanation") if primary else None,
+        suggestion=primary.get("suggestion") if primary else None,
         metadata_json=parsed.metadata or None,
         highlights=highlights or None,
+        findings=findings or None,
     )
     session.add(item)
     await session.flush()
 
+    # Citations table is keyed to the item; we collapse all per-finding
+    # citations onto the item for backward compat with the existing
+    # `citations` relationship. Frontend reads finding.citations from
+    # the JSONB list directly, so this is just for the legacy /pdf path.
+    seen: set[tuple[str, str]] = set()
     citation_objs: list[Citation] = []
-    for cit in citations:
-        c = Citation(
-            item_id=item.id,
-            source=cit["source"],
-            reference=cit["reference"],
-            snippet=cit["snippet"],
-            url=cit.get("url"),
-        )
-        session.add(c)
-        citation_objs.append(c)
+    for f in findings:
+        for cit in f.get("citations") or []:
+            key = (cit.get("source", ""), cit.get("reference", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            # Convert plain string source ("zjn"/"dkom"/…) to the
+            # CitationSource enum so the SA Enum column hydrates a
+            # real enum on read — otherwise c.source.value blows up
+            # in serialization.
+            raw_source = cit["source"]
+            if isinstance(raw_source, CitationSource):
+                src_enum = raw_source
+            else:
+                try:
+                    src_enum = CitationSource(str(raw_source).lower())
+                except ValueError:
+                    src_enum = CitationSource.OTHER
+            c = Citation(
+                item_id=item.id,
+                source=src_enum,
+                reference=cit["reference"],
+                snippet=cit.get("snippet") or "",
+                url=cit.get("url"),
+            )
+            session.add(c)
+            citation_objs.append(c)
     await session.flush()
     return item, citation_objs
+
+
+def _build_findings(parsed_item: ParsedItem) -> list[dict[str, Any]]:
+    """Run every deterministic rule + special-case detector on a parsed
+    item and return the list of findings. Random demo mock is appended
+    only when (a) the item is a free-text stavka, and (b) no real
+    finding fired — so it never overshadows actual issues."""
+    findings: list[dict[str, Any]] = []
+    meta = parsed_item.metadata or {}
+    item_kind = meta.get("kind", "stavka")
+    text = parsed_item.text or ""
+
+    # Per-row deterministic rules (missing JM/kol/cijena/opis, vague
+    # description, zero unit price, etc.) apply ONLY to math-bearing
+    # stavke. Opci_uvjeti, section headers and recap items skip these
+    # — they're free-text rows where "Opis stavke je vrlo kratak" is a
+    # nonsensical complaint. Only the brand-lock check below applies
+    # to opci_uvjeti (and that's the only check Marko wants there
+    # until DKOM-pattern analysis comes online).
+    if item_kind == "stavka":
+        findings.extend(run_per_row_rules(text, meta))
+
+    # Brand lock — applies to text-bearing items
+    if item_kind in ("stavka", "opci_uvjeti", "raw_text"):
+        brand = _detect_brand_mentions(text)
+        if brand is not None:
+            brand_expl, brand_sugg = brand
+            findings.append(
+                {
+                    "kind": "brand_lock",
+                    "status": AnalysisItemStatus.FAIL.value,
+                    "explanation": brand_expl,
+                    "suggestion": brand_sugg,
+                    "is_mock": False,
+                    "citations": [dict(_PLACEHOLDER_ZJN)],
+                }
+            )
+
+    # Arithmetic (kol×cijena ≠ iznos, or >2 decimals on money values)
+    arith = _detect_arithmetic_issues(meta)
+    if arith is not None:
+        problems, fix_suggestions = arith
+        findings.append(
+            {
+                "kind": "arithmetic",
+                "status": AnalysisItemStatus.FAIL.value,
+                "explanation": "Računska greška u stavci:\n"
+                + "\n".join(f"• {p}" for p in problems),
+                "suggestion": " ".join(fix_suggestions),
+                "is_mock": False,
+                "citations": [dict(_PLACEHOLDER_ZJN)],
+            }
+        )
+
+    # Group-sum validation
+    gs = _detect_group_sum_issues(meta)
+    if gs is not None:
+        gs_problems, gs_sugg, gs_status = gs
+        findings.append(
+            {
+                "kind": "group_sum",
+                "status": gs_status.value,
+                "explanation": "Provjera UKUPNO retka:\n"
+                + "\n".join(f"• {p}" for p in gs_problems),
+                "suggestion": " ".join(gs_sugg),
+                "is_mock": False,
+                "citations": [dict(_PLACEHOLDER_ZJN)],
+            }
+        )
+    elif item_kind == "group_sum":
+        # Clean group sum — note as OK so the user sees a positive
+        # confirmation rather than empty space.
+        findings.append(
+            {
+                "kind": "group_sum_ok",
+                "status": AnalysisItemStatus.OK.value,
+                "explanation": (
+                    "SUM formula uredno pokriva svih "
+                    f"{len(meta.get('math_rows_in_range') or [])} "
+                    "matematičkih redova u rasponu."
+                ),
+                "suggestion": None,
+                "is_mock": False,
+                "citations": [],
+            }
+        )
+
+    # Recap-line cross-sheet ref validation
+    rl = _detect_recap_line_issues(meta)
+    if rl is not None:
+        rl_problems, rl_sugg, rl_status = rl
+        findings.append(
+            {
+                "kind": "recap_ref",
+                "status": rl_status.value,
+                "explanation": "Provjera reference:\n"
+                + "\n".join(f"• {p}" for p in rl_problems),
+                "suggestion": " ".join(rl_sugg) if rl_sugg else None,
+                "is_mock": False,
+                "citations": [dict(_PLACEHOLDER_ZJN)],
+            }
+        )
+    elif item_kind == "recap_line" and meta.get("ref_validation"):
+        refs_count = len(meta.get("ref_validation") or [])
+        findings.append(
+            {
+                "kind": "recap_ref_ok",
+                "status": AnalysisItemStatus.OK.value,
+                "explanation": (
+                    "Cross-sheet referenca uredno pokazuje na UKUPNO "
+                    f"{'red' if refs_count == 1 else 'redove'} odgovarajućeg sheeta."
+                ),
+                "suggestion": None,
+                "is_mock": False,
+                "citations": [],
+            }
+        )
+
+    # Random demo mock — only for stavke that have NO real finding.
+    # Deterministic findings always win; mock only fills the silence.
+    has_real = any(not f.get("is_mock") and f.get("status") != "ok" for f in findings)
+    if item_kind == "stavka" and not has_real:
+        status = _pick_status()
+        picked = _explanation_for(status, text)
+        if picked is not None:
+            mock_expl, mock_sugg = picked
+            findings.append(
+                {
+                    "kind": "mock",
+                    "status": status.value,
+                    "explanation": mock_expl,
+                    "suggestion": mock_sugg,
+                    "is_mock": True,
+                    "citations": [dict(_PLACEHOLDER_ZJN)] if status != AnalysisItemStatus.OK else [],
+                }
+            )
+
+    return findings
 
 
 async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
@@ -468,69 +766,20 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
 
         for index, parsed_item in enumerate(parsed.items):
             await asyncio.sleep(random.uniform(0.15, 0.45))
-            status = _pick_status()
-            picked = _explanation_for(status, parsed_item.text)
-            if picked is None:
-                # Random reason was incompatible with the text (e.g. "brand
-                # named" pick on text with no brand). Downgrade to OK rather
-                # than fabricate a proizvođač that isn't there.
-                status = AnalysisItemStatus.OK
-                explanation, suggestion = None, None
-            else:
-                explanation, suggestion = picked
-            citations = await _build_citations(status, parsed_item.text)
-            highlights = _build_highlights(parsed_item.text, status)
+            findings = _build_findings(parsed_item)
+            highlights = _build_highlights(
+                parsed_item.text, _aggregate_status(findings)
+            )
 
-            # Deterministic override: if the parser flagged any
-            # arithmetic issue on this item, force FAIL + show the
-            # actual problem instead of the random mock reasons.
-            arithmetic = _detect_arithmetic_issues(parsed_item.metadata)
-            if arithmetic is not None:
-                problems, fix_suggestions = arithmetic
-                status = AnalysisItemStatus.FAIL
-                explanation = "Računska greška u stavci:\n" + "\n".join(
-                    f"• {p}" for p in problems
-                )
-                suggestion = " ".join(fix_suggestions)
-                citations = [dict(_PLACEHOLDER_ZJN)]
-
-            # Group-sum validation: SUM formula must exist and cover all
-            # math rows in its range. Drives status for kind="group_sum".
-            group_sum = _detect_group_sum_issues(parsed_item.metadata)
-            if group_sum is not None:
-                gs_problems, gs_suggestions, gs_status = group_sum
-                status = gs_status
-                explanation = "Provjera UKUPNO retka:\n" + "\n".join(
-                    f"• {p}" for p in gs_problems
-                )
-                suggestion = " ".join(gs_suggestions)
-                citations = [dict(_PLACEHOLDER_ZJN)]
-                highlights = []
-            elif (
-                parsed_item.metadata
-                and parsed_item.metadata.get("kind") == "group_sum"
-            ):
-                # Group sum without issues — explicit OK with a friendly note.
-                status = AnalysisItemStatus.OK
-                explanation = (
-                    f"SUM formula uredno pokriva svih "
-                    f"{len(parsed_item.metadata.get('math_rows_in_range') or [])} "
-                    f"matematičkih redova u rasponu."
-                )
-                suggestion = None
-                citations = []
-                highlights = []
             stored, stored_citations = await _persist_item(
                 session,
                 analysis_id=analysis_id,
                 parsed=parsed_item,
-                status=status,
-                explanation=explanation,
-                suggestion=suggestion,
-                citations=citations,
+                findings=findings,
                 highlights=highlights,
             )
-            summary[status.value] = summary.get(status.value, 0) + 1
+            status_key = _enum_str(stored.status)
+            summary[status_key] = summary.get(status_key, 0) + 1
             analysis.progress_percent = int(((index + 1) / max(total, 1)) * 100)
             await session.commit()
 

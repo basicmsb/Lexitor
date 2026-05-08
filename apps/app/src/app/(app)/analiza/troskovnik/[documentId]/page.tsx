@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AnalysisResults } from "@/components/AnalysisResults";
 import { useAnalysisStream } from "@/hooks/useAnalysisStream";
-import { api } from "@/lib/api";
+import { API_BASE_URL, api } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-storage";
 import type { AnalysisItemPublic, DocumentPublic } from "@/lib/types";
 
 export default function TroskovnikDetailPage() {
@@ -65,6 +66,26 @@ export default function TroskovnikDetailPage() {
     }
   };
 
+  const exportPdf = (onlyErrors: boolean) => {
+    if (!analysisId) return;
+    const token = getAccessToken();
+    if (!token) {
+      setBootstrapError("Nedostaje pristupni token. Prijavi se ponovno.");
+      return;
+    }
+    const params = new URLSearchParams({
+      token,
+      only_errors: String(onlyErrors),
+    });
+    // Open in a new tab — browser handles the download via the
+    // attachment Content-Disposition header.
+    window.open(
+      `${API_BASE_URL}/analyses/${analysisId}/pdf?${params}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
   if (!documentId) return null;
 
   if (bootstrapping) {
@@ -94,13 +115,35 @@ export default function TroskovnikDetailPage() {
           </button>
           <h1 className="font-display text-2xl text-ink">{document?.filename ?? "Analiza"}</h1>
         </div>
-        <button
-          type="button"
-          onClick={restart}
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-ink transition"
-        >
-          Pokreni ponovno
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative inline-flex rounded-md border border-brand-border overflow-hidden">
+            <button
+              type="button"
+              onClick={() => exportPdf(false)}
+              disabled={!analysisId || stream.status !== "complete"}
+              className="px-3 py-1.5 text-sm text-navy hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Izvezi cijelu analizu u PDF"
+            >
+              Izvezi PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => exportPdf(true)}
+              disabled={!analysisId || stream.status !== "complete"}
+              className="px-3 py-1.5 text-sm text-navy hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed transition border-l border-brand-border"
+              title="Izvezi samo stavke s nalazima (FAIL/WARN/UNCERTAIN)"
+            >
+              Samo greške
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={restart}
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-ink transition"
+          >
+            Pokreni ponovno
+          </button>
+        </div>
       </div>
 
       <AnalysisResults
@@ -109,6 +152,7 @@ export default function TroskovnikDetailPage() {
         items={items}
         summary={stream.summary}
         error={stream.error}
+        analysisId={analysisId ?? ""}
       />
     </div>
   );

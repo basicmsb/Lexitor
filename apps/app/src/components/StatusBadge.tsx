@@ -53,7 +53,12 @@ export function StatusDot({ status }: { status: AnalysisItemStatus }) {
   return (
     <span
       aria-hidden
-      className="inline-block w-2 h-2 rounded-full"
+      // Explicit min-width / shrink-0 prevents the flex parent from
+      // squashing the dot into a vertical bar when sibling text grows.
+      // 10×10 px (w-2.5 h-2.5) renders as a stable circle across the
+      // colour palette — at 8×8 the anti-aliasing on saturated reds /
+      // oranges read as a thin rectangle next to the muted green.
+      className="inline-block w-2.5 h-2.5 min-w-[0.625rem] shrink-0 rounded-full"
       style={{ backgroundColor: s.dotHex }}
     />
   );

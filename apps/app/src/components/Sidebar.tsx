@@ -15,6 +15,7 @@ const navigation = [
   { href: "/clanci", label: "Članci" },
   { href: "/upute", label: "Upute" },
   { href: "/paketi", label: "Paketi" },
+  { href: "/postavke", label: "Postavke" },
 ] as const;
 
 export function Sidebar() {

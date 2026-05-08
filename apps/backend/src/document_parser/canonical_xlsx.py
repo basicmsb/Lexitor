@@ -33,8 +33,8 @@ from src.document_parser.base import ParsedDocument, ParsedItem, ParserError
 
 SKIP_SHEET_TOKENS = (
     "naslovn",  # naslovna, naslovnica, naslovni
+    "nasl uk",  # naslovna ukratko (Arhigon abbreviation)
     "sadrz",  # sadržaj, sadrzaj
-    "sadrž",
     "eksportiraj",  # Apple Numbers TOC export
     "summary",
     "export",
@@ -43,12 +43,21 @@ SKIP_SHEET_TOKENS = (
     "toc",
     "korice",
 )
-OPCI_UVJETI_TOKENS = ("opci uvj", "opće uvj", "opce uvj", "general cond")
+OPCI_UVJETI_TOKENS = (
+    "opci uvj",   # opći uvjeti (proper spelling, after diacritic strip)
+    "opci uvij",  # opći uvijeti (common typo)
+    "general cond",
+)
 REKAPITULACIJA_TOKENS = ("rekapitul", "recapitul", "summary of works")
+
+# Croatian diacritics → ASCII so token matching is invariant to spelling.
+# Lets "0_OPĆI UVIJETI" resolve to the same key as "opci uvijeti".
+_DIACRITIC_TABLE = str.maketrans({"č": "c", "ć": "c", "ž": "z", "š": "s", "đ": "d"})
 
 
 def _normalise(text: str) -> str:
-    return re.sub(r"[^a-z0-9čćžšđ]+", " ", text.lower()).strip()
+    s = (text or "").lower().translate(_DIACRITIC_TABLE)
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
 def classify_sheet(name: str) -> str:
@@ -66,10 +75,18 @@ def classify_sheet(name: str) -> str:
 # Header / column detection
 
 HEADER_TOKENS: dict[str, tuple[str, ...]] = {
-    "rb": ("redni broj", "r b", "rb", "r br", "br", "broj"),
-    "opis": ("opis stavke", "opis", "naziv stavke", "naziv", "stavka", "predmet", "description"),
+    "rb": (
+        "redni broj", "r b", "rb", "r br", "br", "broj",
+        "stavka",  # Arhigon convention: column header "stavka" = position number
+        "pozicija", "poz",
+    ),
+    "opis": (
+        "opis stavke", "naziv stavke",
+        "opis", "naziv", "predmet", "description",
+        "stavka",  # fallback when there's no "opis stavke" column
+    ),
     "jm": ("jedinica mjere", "jed mjere", "jed mj", "jm", "jedinica", "mjera", "unit"),
-    "kol": ("kolicina stavke", "kolicina", "kol", "qty", "količina", "količ"),
+    "kol": ("kolicina stavke", "kolicina", "kol", "qty"),
     "cijena": ("jedinicna cijena", "jed cijena", "jedinicna", "cijena", "price"),
     "iznos": ("ukupna cijena", "ukupno", "iznos", "total", "vrijednost"),
 }
@@ -89,15 +106,33 @@ class ColumnMapping:
         return self.opis is not None
 
 
-def _match_role(text: str) -> str | None:
+def _match_roles(text: str) -> list[tuple[str, int]]:
+    """Return every (role, score) match for `text`. Score is the matched
+    token length — longer match = more specific. Lets the caller pick
+    intelligently when one cell matches multiple roles ("opis stavke"
+    matches both "opis stavke" in opis and "stavka" in rb)."""
     norm = _normalise(text)
     if not norm:
-        return None
+        return []
+    out: list[tuple[str, int]] = []
     for role, tokens in HEADER_TOKENS.items():
-        for tok in sorted(tokens, key=len, reverse=True):
-            if tok in norm:
-                return role
-    return None
+        best = 0
+        for tok in tokens:
+            if tok in norm and len(tok) > best:
+                best = len(tok)
+        if best > 0:
+            out.append((role, best))
+    return out
+
+
+def _match_role(text: str) -> str | None:
+    """Backwards-compatible single-role lookup: pick the highest-scoring
+    role for this text. Used by `detect_unit_quantity_swap` and similar
+    secondary heuristics."""
+    matches = _match_roles(text)
+    if not matches:
+        return None
+    return max(matches, key=lambda x: x[1])[0]
 
 
 def _row_to_strings(row: tuple[Cell, ...]) -> list[str]:
@@ -107,19 +142,171 @@ def _row_to_strings(row: tuple[Cell, ...]) -> list[str]:
     ]
 
 
+def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
+    """Infer column→role mapping from data rows alone, for sheets that
+    don't carry an explicit "stavka | opis | jed. mjere | …" header
+    (common in older Croatian troskovnici). Walks ~100 rows and counts
+    per-column signals: section labels, long text, short unit-like
+    strings, numeric values, formulas. Roles are then assigned to the
+    columns with the strongest signal in each category.
+
+    Returns an empty mapping when the data doesn't look structured
+    enough — caller falls back to free-text parsing."""
+    if not rows:
+        return ColumnMapping()
+    sample = rows[:100]
+    max_cols = max((len(r) for r in sample), default=0)
+    stats: dict[int, dict[str, int]] = {
+        c: {
+            "section_labels": 0,
+            "long_text": 0,
+            "short_alpha": 0,
+            "numeric": 0,
+            "formula": 0,
+            "non_empty": 0,
+        }
+        for c in range(max_cols)
+    }
+    short_alpha_re = re.compile(r"^[a-zA-Zčćžšđ][a-zA-Z0-9čćžšđ\s]{0,5}\.?$")
+    for row in sample:
+        for col_idx, cell in enumerate(row[:max_cols]):
+            if cell is None or cell.value is None or cell.value == "":
+                continue
+            stats[col_idx]["non_empty"] += 1
+            if cell.data_type == "f":
+                stats[col_idx]["formula"] += 1
+                continue
+            v = cell.value
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                stats[col_idx]["numeric"] += 1
+                continue
+            s = str(v).strip()
+            if not s:
+                continue
+            if _is_section_label(s):
+                stats[col_idx]["section_labels"] += 1
+                continue
+            if len(s) > 30:
+                stats[col_idx]["long_text"] += 1
+            elif short_alpha_re.match(s):
+                stats[col_idx]["short_alpha"] += 1
+
+    mapping = ColumnMapping()
+    used: set[int] = set()
+
+    def _pick(metric: str, threshold: int) -> int | None:
+        candidates = [
+            (c, st[metric]) for c, st in stats.items() if c not in used
+        ]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda x: x[1])
+        return best[0] if best[1] >= threshold else None
+
+    # rb — column with the most section-style labels (1., 1.1., A.II.3)
+    rb_col = _pick("section_labels", 3)
+    if rb_col is not None:
+        mapping.rb = rb_col
+        used.add(rb_col)
+
+    # opis — column with the most long descriptive text
+    opis_col = _pick("long_text", 2)
+    if opis_col is not None:
+        mapping.opis = opis_col
+        used.add(opis_col)
+
+    # jm — column with the most short unit-like tokens (m, m2, m3, kpl, kom)
+    jm_col = _pick("short_alpha", 2)
+    if jm_col is not None:
+        mapping.jm = jm_col
+        used.add(jm_col)
+
+    # Numeric columns get assigned to kol → cijena → iznos in the order
+    # they appear left-to-right (typical Croatian layout). A column that
+    # holds mostly formulas is most likely the iznos column (=kol×cijena).
+    numeric_cols = sorted(
+        (
+            c for c, st in stats.items()
+            if c not in used and (st["numeric"] + st["formula"]) >= 2
+        )
+    )
+    if len(numeric_cols) >= 3:
+        mapping.kol = numeric_cols[0]
+        mapping.cijena = numeric_cols[1]
+        mapping.iznos = numeric_cols[-1]
+    elif len(numeric_cols) == 2:
+        mapping.kol = numeric_cols[0]
+        mapping.iznos = numeric_cols[1]
+    elif len(numeric_cols) == 1:
+        mapping.iznos = numeric_cols[0]
+
+    if not mapping.is_minimally_complete:
+        return ColumnMapping()
+    return mapping
+
+
 def find_header(rows: list[tuple[Cell, ...]]) -> tuple[int, ColumnMapping] | None:
+    """Locate the header row and infer column→role mapping.
+
+    The interesting case is ambiguity: a header like Arhigon's "stavka"
+    can match both rb (position number) and opis (description). We
+    handle it by collecting every match per column with its score, then
+    assigning columns to roles greedily — most-specific match first —
+    and falling back to a column's next-best role when its first choice
+    is taken. As a final post-processing pass: if two columns matched
+    cijena and iznos is still empty, the right-most one is promoted to
+    iznos (Croatian convention "jedinična cijena" + "cijena (EUR)" =
+    unit + total)."""
     for idx, row in enumerate(rows[:80]):
         cells = _row_to_strings(row)
-        mapping = ColumnMapping()
-        hits = 0
+        # Collect candidate roles per non-empty column
+        candidates: list[tuple[int, list[tuple[str, int]]]] = []
         for col_idx, text in enumerate(cells):
-            role = _match_role(text)
-            if role is None or getattr(mapping, role) is not None:
-                continue
-            setattr(mapping, role, col_idx)
-            hits += 1
-        if hits >= 2 and mapping.is_minimally_complete:
+            matches = _match_roles(text)
+            if matches:
+                candidates.append((col_idx, matches))
+        if not candidates:
+            continue
+
+        # Sort columns by their best score DESC so the most-specific
+        # header phrase ("opis stavke") gets first pick at its role.
+        candidates.sort(key=lambda c: -max(s for _, s in c[1]))
+
+        mapping = ColumnMapping()
+        used_roles: set[str] = set()
+        unassigned: list[int] = []
+        for col_idx, matches in candidates:
+            # Try roles in score-descending order until one is free
+            for role, _score in sorted(matches, key=lambda m: -m[1]):
+                if role not in used_roles and getattr(mapping, role) is None:
+                    setattr(mapping, role, col_idx)
+                    used_roles.add(role)
+                    break
+            else:
+                unassigned.append(col_idx)
+
+        # Post-process: if cijena got assigned but iznos didn't, and any
+        # unassigned column also matched cijena tokens, that one is the
+        # totals column ("cijena (EUR)" sitting next to "jedinična cijena").
+        if mapping.cijena is not None and mapping.iznos is None:
+            for col_idx in unassigned:
+                text = cells[col_idx]
+                if any(role == "cijena" for role, _ in _match_roles(text)):
+                    if col_idx > mapping.cijena:
+                        mapping.iznos = col_idx
+                        used_roles.add("iznos")
+                        break
+
+        if len(used_roles) >= 2 and mapping.is_minimally_complete:
             return idx, mapping
+
+    # Token-based detection failed — sniff column roles from the data
+    # itself. Older Croatian troskovnici (DV Netretić-style) often ship
+    # without an explicit header row. Returns header_idx = -1 to signal
+    # "no header to skip — start parsing from the very first row".
+    sniffed = _sniff_columns(rows)
+    if sniffed.is_minimally_complete:
+        return -1, sniffed
     return None
 
 
@@ -128,15 +315,16 @@ def find_header(rows: list[tuple[Cell, ...]]) -> tuple[int, ColumnMapping] | Non
 
 SECTION_LABEL_RE = re.compile(
     r"^\s*(?:"
-    r"[A-ZČĆŽŠĐ]\.?[\s\d.]*\d"           # A1, A.1, A.1.1, A 1
-    r"|\d+(?:\.\d+){0,4}\.?"              # 1, 1., 1.1, 1.1.1
-    r"|[A-ZČĆŽŠĐ]\.\d+(?:\.\d+){0,3}"     # A.1, A.1.1
-    r"|[A-ZČĆŽŠĐ]\.?"                     # A, A. — single Croatian uppercase letter
-    r"|[IVXLCM]+\.?"                       # I, II, III, IV, V, VI, VII, VIII, IX, X (roman numerals)
+    r"[A-ZČĆŽŠĐ]\.?[\s\d.]*\d"                                   # A1, A.1, A.1.1, A 1
+    r"|\d+(?:\.\d+){0,4}\.?"                                       # 1, 1., 1.1, 1.1.1
+    r"|[A-ZČĆŽŠĐ]\.\d+(?:\.\d+){0,3}\.?"                          # A.1, A.1.1
+    r"|[A-ZČĆŽŠĐ]\.[IVXLCM]+(?:\.\d+(?:\.\d+){0,3})?\.?"          # A.II, A.II.3, B.I.01, A.II.3.1
+    r"|[A-ZČĆŽŠĐ]\.?"                                              # A, A. — single Croatian uppercase letter
+    r"|[IVXLCM]+\.?"                                               # I, II, III, IV, V, VI, VII, VIII, IX, X (roman numerals)
     r")\s*$"
 )
-# Matches '1', '1.', '1.1', '1.1.1', 'A', 'A.', 'A.1', 'A.1.1', '12', '23.4',
-# 'I', 'II', 'III', 'IV', 'V', etc.
+# Matches '1', '1.', '1.1', '1.1.1', 'A', 'A.', 'A.1', 'A.1.1', 'A.II', 'A.II.3',
+# 'B.I.01', 'B.I.01.', '12', '23.4', 'I', 'II', 'III', 'IV', 'V', etc.
 
 # Detection of UKUPNO/total label anywhere in the row text. Per Marko's
 # guidance: an UKUPNO row carries the literal "UKUPNO" word (and usually
@@ -290,16 +478,46 @@ _CELL_REF_RE = re.compile(r"\$?[A-Z]+\$?(\d+)")
 
 
 def _extract_sum_rows(formula: Any) -> list[int] | None:
-    """If `formula` is a SUM(...) expression, return sorted unique list of
-    Excel row numbers it aggregates (ranges expanded, single-cell lists
-    enumerated). Returns None for non-SUM formulas like `=A1` or `=B5*C5`."""
+    """Return sorted unique row numbers that `formula` aggregates over,
+    or None when it isn't an aggregation-style formula.
+
+    Recognises:
+    - `=SUM(F11:F43)` — range sum
+    - `=SUM(F24,F36,F67)` — point-wise SUM with comma/semicolon list
+    - `=F14+F19` — plain cell additions (no SUM function)
+    - `=F42` — single-cell reference (often used for sub-UKUPNO that
+      copies one stavka's total)
+
+    Returns None for per-row math formulas like `=F42*E42` (kol×cijena
+    product is NOT aggregating multiple rows, just one row's columns)
+    so those don't get mis-classified as UKUPNO."""
     if not isinstance(formula, str) or not formula.lstrip().startswith("="):
         return None
-    m = _SUM_FUNC_RE.search(formula)
-    if m is None:
-        return None
-    body = m.group(1)
+
     rows: set[int] = set()
+
+    # SUM(...) function — handle first because the body inside may
+    # contain colons/commas that the plain-arithmetic check rejects.
+    m = _SUM_FUNC_RE.search(formula)
+    if m is not None:
+        body = m.group(1)
+        for rm in _RANGE_REF_RE.finditer(body):
+            a, b = int(rm.group(1)), int(rm.group(2))
+            for r in range(min(a, b), max(a, b) + 1):
+                rows.add(r)
+        body_no_ranges = _RANGE_REF_RE.sub("", body)
+        for rm in _CELL_REF_RE.finditer(body_no_ranges):
+            rows.add(int(rm.group(1)))
+        return sorted(rows) if rows else None
+
+    # Plain cell additions: only +, -, $, digits, letters, whitespace
+    # are allowed. * or / mean it's a product/division (per-row math),
+    # not an aggregation.
+    body = formula[1:].strip()
+    if not body or "*" in body or "/" in body:
+        return None
+    if not re.fullmatch(r"[\s+\-$\d:A-Za-z]+", body):
+        return None
     for rm in _RANGE_REF_RE.finditer(body):
         a, b = int(rm.group(1)), int(rm.group(2))
         for r in range(min(a, b), max(a, b) + 1):
@@ -310,11 +528,30 @@ def _extract_sum_rows(formula: Any) -> list[int] | None:
     return sorted(rows) if rows else None
 
 
-def _row_sum_info(row: tuple[Cell, ...]) -> tuple[list[int], str] | None:
-    """Scan every cell in `row` for a SUM formula. Return (referenced rows,
-    formula text) of the first one found. The iznos column inferred by
-    the header detector may not be the column that holds the formula
-    (Apple Numbers / non-canonical layouts), so we look at every cell."""
+def _row_sum_info(
+    row: tuple[Cell, ...],
+    iznos_col: int | None = None,
+) -> tuple[list[int], str] | None:
+    """Find a SUM-like formula on `row` and return (referenced rows,
+    formula text).
+
+    With `iznos_col` set (parse_stavke_sheet — header detection knew the
+    iznos column), only that column is checked. This avoids false-flagging
+    rows that have aggregation-style formulas in OTHER columns — e.g. a
+    quantity cell `E46=E34+E39` summing prior rows is not an UKUPNO of
+    F-column iznos.
+
+    Without `iznos_col` (parse_rekapitulacija_sheet — no canonical mapping),
+    every cell is scanned because rekapitulacija layouts vary."""
+    if iznos_col is not None:
+        cell = _cell(row, iznos_col)
+        if cell is None or cell.value is None or cell.data_type != "f":
+            return None
+        rows = _extract_sum_rows(cell.value)
+        if rows is None:
+            return None
+        return rows, str(cell.value)
+
     for cell in row:
         if cell is None or cell.value is None or cell.data_type != "f":
             continue
@@ -436,6 +673,7 @@ class _Block:
         mapping: ColumnMapping,
         row_index: int,
         cache: dict[tuple[int, int], Any] | None = None,
+        with_opis_label: bool = True,
     ) -> None:
         iznos_cell = _cell(row, mapping.iznos)
         kol_value = _resolve(_cell(row, mapping.kol), cache)
@@ -454,17 +692,23 @@ class _Block:
         cijena_num = _num(cijena_value)
         if kol_num is not None and cijena_num is not None:
             computed_iznos = round(kol_num * cijena_num, 2)
-        self.math_rows.append(
-            {
-                "row": row_index,
-                "jm": _str(row, mapping.jm, cache),
-                "kol": kol_value,
-                "cijena": cijena_value,
-                "iznos": raw_iznos,
-                "iznos_is_formula": is_formula,
-                "computed_iznos": computed_iznos,
-            }
-        )
+        entry: dict[str, Any] = {
+            "row": row_index,
+            "jm": _str(row, mapping.jm, cache),
+            "kol": kol_value,
+            "cijena": cijena_value,
+            "iznos": raw_iznos,
+            "iznos_is_formula": is_formula,
+            "computed_iznos": computed_iznos,
+        }
+        # Per Marko's rule: opis text on a math row IS its podstavka
+        # label, not a separate body line. Section-header rows (where
+        # opis is the stavka title, not a per-row label) skip this.
+        if with_opis_label:
+            opis_label = _str(row, mapping.opis, cache)
+            if opis_label:
+                entry["position_label"] = opis_label
+        self.math_rows.append(entry)
 
     @property
     def is_empty(self) -> bool:
@@ -495,11 +739,23 @@ def parse_stavke_sheet(
 
     header_info = find_header(rows)
     if header_info is None:
-        return _raw_text_items(ws, sheet_name)
+        return _raw_text_items(ws, sheet_name, cache, item_kind="opci_uvjeti")
 
     header_idx, mapping = header_info
     sample = rows[header_idx + 1 : header_idx + 41]
     mapping = detect_rb_column(sample, mapping)
+
+    # Pre-header text rows (sheet title, opci uvjeti for the section,
+    # specifications etc.) are emitted as opci_uvjeti items so they
+    # aren't lost. Per Marko: A.I. Pripremni radovi typically has its
+    # opći uvjeti at rows 1..36, then the header at row 37.
+    # When header_idx is -1 (sniff fallback — no header row exists),
+    # there's nothing pre-header to extract.
+    preheader_items = (
+        []
+        if header_idx < 0
+        else _extract_preheader_items(rows[:header_idx], sheet_name, cache)
+    )
 
     blocks: list[_Block] = []
     group_sums: list[dict[str, Any]] = []
@@ -524,21 +780,66 @@ def parse_stavke_sheet(
         # Non-empty row resets streak
         empty_streak = 0
 
-        # UKUPNO / recap intercept: any cell in this row holding a SUM(...)
-        # formula means this is not a stavka of its own. It's either the
-        # current stavka's own UKUPNO (sum covers rows belonging to that
-        # stavka) or a group/recap total (sum covers rows from earlier
-        # blocks). We tell them apart by the smallest referenced row.
-        sum_info = _row_sum_info(row)
-        if sum_info:
-            sum_rows, iznos_formula = sum_info
-            sum_start = sum_rows[0]
+        # UKUPNO / recap intercept. Per Marko's rule, a row is an UKUPNO
+        # if EITHER:
+        #   (a) any cell holds an aggregation formula (SUM(...) or plain
+        #       cell additions like =G42 / =G42+G53), or
+        #   (b) any cell carries the literal "UKUPNO" / "UKP" / "Total" /
+        #       "Suma" word — catches hardcoded UKUPNO rows that lack a
+        #       SUM formula entirely.
+        # Restrict SUM detection to the iznos column inside parse_stavke_sheet
+        # so a quantity formula like E46=E34+E39 doesn't get misclassified
+        # as an UKUPNO row.
+        sum_info = _row_sum_info(row, iznos_col=mapping.iznos)
+        ukupno_labelled = _row_has_ukupno_label(row, cache)
+        # Suppress text-based UKUPNO trigger when the row also carries a
+        # full kol×cijena pair: "ukupno površina ploča ophoda P=" is a
+        # math row with descriptive text, not an aggregation. Only fire
+        # text-based UKUPNO when at least one of kol/cijena is empty.
+        if ukupno_labelled and not sum_info:
+            kol_present = _num(_resolve(_cell(row, mapping.kol), cache)) is not None
+            cijena_present = _num(_resolve(_cell(row, mapping.cijena), cache)) is not None
+            if kol_present and cijena_present:
+                ukupno_labelled = False
+        if sum_info or ukupno_labelled:
+            if sum_info:
+                sum_rows, iznos_formula = sum_info
+            else:
+                # Text-only UKUPNO: read formula ONLY from the iznos
+                # column. Any aggregation formula elsewhere in the row
+                # (e.g. quantity sums) doesn't represent the UKUPNO total.
+                iznos_cell = _cell(row, mapping.iznos)
+                iznos_formula = (
+                    iznos_cell.value
+                    if iznos_cell is not None
+                    and iznos_cell.data_type == "f"
+                    and isinstance(iznos_cell.value, str)
+                    else None
+                )
+                sum_rows = (
+                    _extract_sum_rows(iznos_formula) or []
+                    if iznos_formula
+                    else []
+                )
+            sum_start = sum_rows[0] if sum_rows else offset
             label_parts = [
                 _str(row, c, cache)
-                for c in (mapping.opis, mapping.jm, mapping.kol, mapping.cijena)
+                for c in (mapping.opis, mapping.jm, mapping.kol, mapping.cijena, mapping.rb)
             ]
             label_text = " ".join(p for p in label_parts if p) or "UKUPNO"
-            if not current.is_empty and sum_start >= current.start_row:
+            # Stavka-own vs group/recap classification:
+            # - With sum_rows: smallest referenced row at/below current
+            #   block's first row → stavka's own UKUPNO. Above → group sum.
+            # - Without sum_rows (text-only UKUPNO with no formula or
+            #   single ref): default to current stavka if non-empty.
+            attaches_to_current = (
+                not current.is_empty
+                and (
+                    (sum_rows and sum_start >= current.start_row)
+                    or not sum_rows
+                )
+            )
+            if attaches_to_current:
                 # Stavka's own UKUPNO — attach to current block so we can
                 # validate it later, but don't add it as a substavka.
                 current.total_row = {
@@ -565,8 +866,52 @@ def parse_stavke_sheet(
             continue
 
         if is_new_section:
+            parent_rb = (current.label or "").rstrip(".")
+            child_rb = rb_str.rstrip(".")
+
+            # "Kompleti" pattern: a row with the SAME rb as the open
+            # stavka — usually labelled "... - ukupno" — carries the
+            # final kpl × cijena = iznos for the whole kit. Component
+            # specification rows above had kol+jm only; this row brings
+            # the price. Absorb it as the stavka's only math row,
+            # don't open a new section.
+            if (
+                not current.is_empty
+                and parent_rb
+                and child_rb == parent_rb
+                and has_math
+            ):
+                current.add_math(row, mapping, offset, cache, with_opis_label=False)
+                continue
+
+            # Child-numbered sections (e.g. "01.01.01" under "01.01" or
+            # "1.1.1" under "1.1") that carry math values are podstavke
+            # of the parent stavka, not new top-level stavke. Detect by
+            # rb-prefix match and absorb as a math row of the current
+            # block. The full rb (e.g. "01.01.01") is preserved as part
+            # of the podstavka label so users see the numbering.
+            if (
+                not current.is_empty
+                and parent_rb
+                and has_math
+                and child_rb.startswith(parent_rb + ".")
+            ):
+                current.add_math(row, mapping, offset, cache)
+                last_math = current.math_rows[-1]
+                opis_label = last_math.get("position_label", "")
+                last_math["position_label"] = (
+                    f"{rb_str} {opis_label}".strip() if opis_label else rb_str
+                )
+                continue
+
             if not current.is_empty:
                 blocks.append(current)
+            # Capture opis as the title initially. We only know whether
+            # this section ends up being a stavka (has math) or a section
+            # header (no math) once we see the rows that follow, so we
+            # defer the decision: in the emit phase, stavke demote the
+            # title to a description line (Marko's "treat stavka opis as
+            # body text" rule), section headers keep it as a heading.
             current = _Block(
                 label=rb_str,
                 title=opis_str,
@@ -575,14 +920,43 @@ def parse_stavke_sheet(
                 start_row=offset,
             )
             if has_math:
-                current.add_math(row, mapping, offset, cache)
+                # Section row carries math → stavka. Don't read opis as
+                # the math row's podstavka label since opis is the
+                # stavka title (and will become its first description
+                # line during emit).
+                current.add_math(row, mapping, offset, cache, with_opis_label=False)
             continue
 
-        # Continuation row inside the current block
-        if opis_str:
-            current.add_description(offset, opis_str)
+        # Continuation row inside the current block. Three sub-cases:
+        # 1. Row has kol/jm but NO cijena AND NO iznos → "kompleti"
+        #    component specification. The kit's price comes later on the
+        #    same-rb totals row; this line just describes one part. We
+        #    keep it as body text with a "kol jm" tail so the user sees
+        #    "FID sklopka 4p, 25/0.03 A — 2 kom".
+        # 2. Row has full math (cijena or iznos populated) → real math
+        #    row. Opis on the same row becomes the podstavka label.
+        # 3. Pure text row (no math at all) → body description.
         if has_math:
+            cijena_present = (
+                _resolve(_cell(row, mapping.cijena), cache) not in (None, "")
+            )
+            iznos_present = (
+                _resolve(_cell(row, mapping.iznos), cache) not in (None, "")
+            )
+            if not cijena_present and not iznos_present:
+                # Component spec (kompleti): keep as description
+                kol_text = _str(row, mapping.kol, cache)
+                jm_text = _str(row, mapping.jm, cache)
+                tail = " ".join(p for p in (kol_text, jm_text) if p).strip()
+                spec_text = opis_str
+                if tail:
+                    spec_text = f"{spec_text} — {tail}".strip(" —") if spec_text else tail
+                if spec_text:
+                    current.add_description(offset, spec_text)
+                continue
             current.add_math(row, mapping, offset, cache)
+        elif opis_str:
+            current.add_description(offset, opis_str)
 
     if not current.is_empty:
         blocks.append(current)
@@ -651,20 +1025,34 @@ def parse_stavke_sheet(
     # the analyzer can reason about hierarchy ("which subgroup is this in").
     section_stack: list[dict[str, Any]] = []
 
-    items: list[ParsedItem] = []
+    # Pre-header opci_uvjeti come first, before any actual stavke
+    items: list[ParsedItem] = list(preheader_items)
+    # Renumber positions to keep them contiguous as we append
+    for i, it in enumerate(items):
+        it.position = i
+
     for _row_idx, kind, payload in ordered:
         if kind == "group_sum":
             gs = payload
-            summed = gs["summed_rows"]
-            sum_min, sum_max = min(summed), max(summed)
+            summed = gs["summed_rows"] or []
             sum_set = set(summed)
 
-            # Effective leaf-math coverage: walk through any sub-totals
-            # referenced by this SUM. A rollup like =F14+F19 (where F14
-            # and F19 are themselves SUMs over stavke) expands to the
-            # transitive set of math rows underneath.
-            effective = _expand_to_leaves(summed)
-            is_rollup = bool(sum_set & set(total_rows_map.keys()))
+            # Text-only UKUPNO with no formula at all (hardcoded value)
+            # has empty summed_rows. We still emit it so the analyzer can
+            # FAIL it as "iznos je upisan ručno", but skip range-based
+            # bookkeeping that needs min()/max().
+            if summed:
+                sum_min, sum_max = min(summed), max(summed)
+                effective = _expand_to_leaves(summed)
+                is_rollup = bool(sum_set & set(total_rows_map.keys()))
+                in_range_rows = {
+                    mr["row"] for mr in sheet_math_inventory
+                    if mr["row"] is not None and sum_min <= mr["row"] <= sum_max
+                }
+            else:
+                effective = set()
+                is_rollup = False
+                in_range_rows = set()
 
             # Display rows: every math row this sum ultimately includes.
             # For leaf sums this is the directly-summed math rows. For
@@ -674,16 +1062,6 @@ def parse_stavke_sheet(
                 if r in math_inventory_by_row
             ]
 
-            # Missing detection. For leaf sums: math rows in [min, max]
-            # that aren't referenced. For rollup sums: any math row in
-            # [min, max] that isn't transitively covered (sub-total may
-            # have skipped some). We also consider the union of widest
-            # ranges of sub-totals so a rollup sum doesn't miss leaves
-            # below its own row range.
-            in_range_rows = {
-                mr["row"] for mr in sheet_math_inventory
-                if mr["row"] is not None and sum_min <= mr["row"] <= sum_max
-            }
             missing_set = in_range_rows - effective - sum_set
             missing = [
                 math_inventory_by_row[r] for r in sorted(missing_set)
@@ -715,8 +1093,17 @@ def parse_stavke_sheet(
         text = block.merged_text()
         if not text and not block.math_rows:
             continue
-        label_parts = [p for p in (block.label, block.title) if p]
-        label = " · ".join(label_parts) or sheet_name
+        # Sidebar label: prefer a real heading; fall back to the first
+        # descriptive line so the sidebar isn't just bare "4" for items
+        # whose opis is a long paragraph.
+        sidebar_label_pieces: list[str] = []
+        if block.label:
+            sidebar_label_pieces.append(block.label)
+        if block.title:
+            sidebar_label_pieces.append(block.title)
+        elif block.description_lines:
+            sidebar_label_pieces.append(block.description_lines[0][1])
+        label = " · ".join(p for p in sidebar_label_pieces if p) or sheet_name
 
         # Block has descriptive content but no math rows → it's a
         # section/subgroup header or a "general terms" pre-amble, not an
@@ -734,31 +1121,69 @@ def parse_stavke_sheet(
                     "row": block.start_row,
                 }
             )
-            items.append(
-                ParsedItem(
-                    position=len(items),
-                    label=label[:200],
-                    text=text,
-                    metadata={
-                        "sheet": sheet_name,
-                        "row": block.start_row,
-                        "title_row": block.title_row,
-                        "text_rows": [
-                            {"row": r, "text": t}
-                            for r, t in block.description_lines
-                        ],
-                        "kind": "section_header",
-                        "rb": block.label,
-                        "title": block.title,
-                        "depth": depth,
-                        "path": [
-                            {"label": s["label"], "title": s["title"]}
-                            for s in section_stack
-                        ],
-                    },
+            # If the block has any descriptive text under the heading
+            # (NAPOMENA / opći uvjeti between subgroup and first stavka),
+            # split it out: emit a slim section_header with just the
+            # title, then emit each description line as its own
+            # opci_uvjeti item so each row gets a row gutter and Lexitor
+            # analiza panel.
+            heading_label_parts = [
+                p for p in (block.label, block.title) if p
+            ]
+            heading_text = " · ".join(heading_label_parts)
+            if heading_text:
+                items.append(
+                    ParsedItem(
+                        position=len(items),
+                        label=heading_text[:200],
+                        text=heading_text,
+                        metadata={
+                            "sheet": sheet_name,
+                            "row": block.start_row,
+                            "title_row": block.title_row,
+                            "kind": "section_header",
+                            "rb": block.label,
+                            "title": block.title,
+                            "depth": depth,
+                            "path": [
+                                {"label": s["label"], "title": s["title"]}
+                                for s in section_stack
+                            ],
+                        },
+                    )
                 )
-            )
+            for row_idx, line in block.description_lines:
+                items.append(
+                    ParsedItem(
+                        position=len(items),
+                        label=(line if len(line) <= 200 else line[:197] + "…"),
+                        text=line,
+                        metadata={
+                            "sheet": sheet_name,
+                            "row": row_idx,
+                            "kind": "opci_uvjeti",
+                            "path": [
+                                {"label": s["label"], "title": s["title"]}
+                                for s in section_stack
+                            ],
+                        },
+                    )
+                )
             continue
+
+        # Stavka: demote any title to the first description line so the
+        # card body shows the opis paragraph (with a row gutter) and the
+        # h2 heading is suppressed. Marko's rule: stavka opis cells are
+        # body text, never an extracted title.
+        if block.title and block.title_row is not None:
+            block.description_lines.insert(
+                0, (block.title_row, block.title)
+            )
+            block.title = ""
+            block.title_row = None
+        # Re-derive merged text after the demote so text_rows + text
+        # stay consistent.
+        text = block.merged_text()
 
         positions = _extract_positions(text)
         # Pair positions with math rows whenever both lists are present
@@ -783,6 +1208,7 @@ def parse_stavke_sheet(
                     ],
                     "kind": "stavka",
                     "rb": block.label,
+                    "title": block.title,
                     "math_rows": block.math_rows,
                     "total_row": block.total_row,
                     "positions": positions or None,
@@ -830,24 +1256,68 @@ def parse_rekapitulacija_sheet(
 
     for offset, row in enumerate(rows, start=1):
         cell_strings = []
+        cell_kinds: list[str] = []  # parallel to cell_strings: "text" / "number" / "formula" / ""
         for c in row:
             if c is None:
                 cell_strings.append("")
+                cell_kinds.append("")
                 continue
-            val = _resolve(c, cache)
-            cell_strings.append(str(val).strip() if val not in (None, "") else "")
+            raw_value = c.value
+            resolved = _resolve(c, cache)
+            if resolved in (None, ""):
+                cell_strings.append("")
+                cell_kinds.append("")
+                continue
+            text = str(resolved).strip()
+            cell_strings.append(text)
+            if isinstance(resolved, (int, float)) and not isinstance(resolved, bool):
+                cell_kinds.append("number")
+            elif (
+                isinstance(raw_value, str)
+                and raw_value.startswith("=")
+                and not isinstance(resolved, (int, float))
+            ):
+                cell_kinds.append("formula")
+            else:
+                cell_kinds.append("text")
         if not any(cell_strings):
             continue
 
         # Sheet-title row (single big descriptive cell, no money / formula)
         sum_info = _row_sum_info(row)
-        formula_info = _row_first_formula(row)
-        formula = formula_info[0] if formula_info else None
+        # In rekapitulacija every "iznos" line typically holds THREE
+        # cross-sheet formulas — one each for rb, opis and the actual
+        # iznos column. Validation cares about the iznos formula (the
+        # one that returns a number) — point at the source sheet's
+        # UKUPNO. Pick the right-most cell whose resolved value is
+        # numeric; if none qualify, fall back to the right-most formula.
+        formula_cells: list[Cell] = [
+            c for c in row
+            if c is not None and c.value is not None and c.data_type == "f"
+        ]
+        iznos_formula_cell: Cell | None = None
+        for c in reversed(formula_cells):
+            resolved = _resolve(c, cache)
+            if isinstance(resolved, (int, float)) and not isinstance(resolved, bool):
+                iznos_formula_cell = c
+                break
+        if iznos_formula_cell is None and formula_cells:
+            iznos_formula_cell = formula_cells[-1]
+        formula = (
+            str(iznos_formula_cell.value) if iznos_formula_cell is not None else None
+        )
         cross_refs = _extract_cross_sheet_refs(formula or "")
         iznos_value = _row_iznos_value(row)
 
-        # Combined free-text (everything but pure numbers / formulas)
-        text_parts = [s for s in cell_strings if s and not s.startswith("=")]
+        # Free-text label of this row: keep only descriptive (non-numeric)
+        # strings. A resolved cross-sheet reference like =armiracki!F26 in
+        # the iznos column comes back as a number (101050.4) — that's the
+        # iznos, not part of the title. Don't concatenate it into the label.
+        text_parts = [
+            s
+            for s, k in zip(cell_strings, cell_kinds, strict=True)
+            if s and k == "text"
+        ]
         full_text = " ".join(text_parts).strip()
 
         # Heuristic: section header — one of the cells is a single uppercase
@@ -937,22 +1407,80 @@ def parse_rekapitulacija_sheet(
     return items
 
 
-def _raw_text_items(ws, sheet_name: str) -> list[ParsedItem]:
+def _raw_text_items(
+    ws,
+    sheet_name: str,
+    cache: dict[tuple[int, int], Any] | None = None,
+    item_kind: str = "opci_uvjeti",
+) -> list[ParsedItem]:
     """Fallback for sheets without a recognisable header — every non-empty
-    row becomes a standalone item. Used for opci_uvjeti, rekapitulacija,
-    and any unrecognised sheet structure."""
+    row becomes a standalone item. Used for opci_uvjeti and any
+    unrecognised sheet structure. Resolves cross-sheet formula references
+    via cache so labels like `=nasl uk!C1` show as the actual investor
+    name instead of raw formula text."""
     items: list[ParsedItem] = []
-    for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        cells = [str(c).strip() for c in row if c not in (None, "")]
+    for idx, row in enumerate(ws.iter_rows(), start=1):
+        cells: list[str] = []
+        for c in row:
+            if c is None:
+                continue
+            val = _resolve(c, cache)
+            if val in (None, ""):
+                continue
+            s = str(val).strip()
+            if s:
+                cells.append(s)
         if not cells:
             continue
         text = " ".join(cells)
+        # Use the row text itself as the item label so the sidebar shows
+        # something readable. Truncate to keep it tidy; full text stays
+        # in `text`. Avoid the old "sheet · red N" pattern — splitLabel
+        # would parse "red N" as a title, so cards displayed "red 1" as
+        # the heading.
+        label = text if len(text) <= 200 else text[:197] + "…"
         items.append(
             ParsedItem(
                 position=len(items),
-                label=f"{sheet_name} · red {idx}",
+                label=label,
                 text=text,
-                metadata={"sheet": sheet_name, "row": idx, "kind": "raw_text"},
+                metadata={"sheet": sheet_name, "row": idx, "kind": item_kind},
+            )
+        )
+    return items
+
+
+def _extract_preheader_items(
+    pre_rows: list[tuple[Cell, ...]],
+    sheet_name: str,
+    cache: dict[tuple[int, int], Any] | None = None,
+) -> list[ParsedItem]:
+    """Pull text-only rows from the area above the header row in a stavke
+    sheet and emit them as opci_uvjeti items. Captures the general-terms
+    paragraph that often sits at the top of a section (e.g. rows 1–36 in
+    'A.I. PRIPREMNI RADOVI' before the actual header at row 37)."""
+    items: list[ParsedItem] = []
+    for idx, row in enumerate(pre_rows, start=1):
+        cells: list[str] = []
+        for c in row:
+            if c is None:
+                continue
+            val = _resolve(c, cache)
+            if val in (None, ""):
+                continue
+            s = str(val).strip()
+            if s:
+                cells.append(s)
+        if not cells:
+            continue
+        text = " ".join(cells)
+        label = text if len(text) <= 200 else text[:197] + "…"
+        items.append(
+            ParsedItem(
+                position=len(items),
+                label=label,
+                text=text,
+                metadata={"sheet": sheet_name, "row": idx, "kind": "opci_uvjeti"},
             )
         )
     return items
@@ -960,6 +1488,157 @@ def _raw_text_items(ws, sheet_name: str) -> list[ParsedItem]:
 
 # ---------------------------------------------------------------------------
 # Public entry
+
+def _normalise_sheet_name(name: str) -> str:
+    """Case-insensitive, whitespace-collapsed key for sheet lookup. Excel
+    formula `=Pripremni!F35` should resolve to a sheet named `pripremni`
+    or `PRIPREMNI` regardless of case (Apple Numbers tends to lowercase)."""
+    return " ".join(str(name or "").strip().lower().split())
+
+
+def _build_document_registry(items: list[ParsedItem]) -> dict[str, dict[str, Any]]:
+    """Sheet → {ukupno_rows, math_rows, grand_ukupno_rows} from parsed items.
+
+    Lets us validate a recap_line's `=zemljani!F46` reference: does row 46
+    in sheet "zemljani" actually correspond to that sheet's UKUPNO, or
+    is it pointing at some random math row mid-document?"""
+    registry: dict[str, dict[str, Any]] = {}
+
+    def _ensure(sheet_name: str) -> dict[str, Any]:
+        key = _normalise_sheet_name(sheet_name)
+        if key not in registry:
+            registry[key] = {
+                "name": sheet_name,
+                "ukupno_rows": {},
+                "math_rows": set(),
+                "grand_ukupno_rows": set(),
+            }
+        return registry[key]
+
+    for item in items:
+        meta = item.metadata or {}
+        sheet = meta.get("sheet")
+        if not sheet:
+            continue
+        kind = meta.get("kind", "")
+        entry = _ensure(sheet)
+
+        if kind == "group_sum":
+            row = meta.get("row")
+            summed = meta.get("summed_rows") or []
+            if row is not None:
+                entry["ukupno_rows"][row] = {
+                    "row": row,
+                    "summed_rows": list(summed),
+                    "label": item.text or item.label,
+                    "is_rollup": bool(meta.get("is_rollup")),
+                }
+        elif kind == "stavka":
+            for mr in meta.get("math_rows") or []:
+                mr_row = mr.get("row")
+                if mr_row is not None:
+                    entry["math_rows"].add(mr_row)
+            total_row = meta.get("total_row")
+            if total_row and total_row.get("row") is not None:
+                entry["ukupno_rows"][total_row["row"]] = {
+                    "row": total_row["row"],
+                    "summed_rows": list(total_row.get("summed_rows") or []),
+                    "label": total_row.get("label", "UKUPNO"),
+                    "is_rollup": False,
+                }
+        elif kind in ("recap_subtotal", "recap_total", "recap_grand"):
+            row = meta.get("row")
+            summed = meta.get("summed_rows") or []
+            if row is not None:
+                entry["ukupno_rows"][row] = {
+                    "row": row,
+                    "summed_rows": list(summed),
+                    "label": item.text or item.label,
+                    "is_rollup": False,
+                }
+                if kind == "recap_grand":
+                    entry["grand_ukupno_rows"].add(row)
+
+    # Mark the widest UKUPNO of each sheet as that sheet's grand UKUPNO so
+    # cross-sheet refs from rekapitulacija can be checked against the
+    # right target. "Widest" = greatest row-range coverage of summed_rows.
+    for entry in registry.values():
+        ukupno_rows = entry["ukupno_rows"]
+        if not ukupno_rows:
+            continue
+
+        def _coverage(u: dict[str, Any]) -> int:
+            sr = u.get("summed_rows") or []
+            return (max(sr) - min(sr) + 1) if sr else 0
+
+        widest = max(ukupno_rows.values(), key=_coverage, default=None)
+        if widest is not None and _coverage(widest) > 0:
+            entry["grand_ukupno_rows"].add(widest["row"])
+
+    return registry
+
+
+def _validate_cross_sheet_ref(
+    ref: dict[str, Any],
+    registry: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify a recap_line's cross-sheet reference against the document
+    registry. Returns a copy of `ref` enriched with status/kind/message."""
+    sheet_key = _normalise_sheet_name(ref.get("sheet", ""))
+    target_row = ref.get("row")
+
+    if sheet_key not in registry:
+        return {
+            **ref,
+            "validation_status": "fail",
+            "validation_kind": "missing_sheet",
+            "message": f"Sheet '{ref.get('sheet')}' ne postoji u dokumentu.",
+        }
+    entry = registry[sheet_key]
+    if target_row in entry["grand_ukupno_rows"]:
+        u = entry["ukupno_rows"].get(target_row, {})
+        return {
+            **ref,
+            "validation_status": "ok",
+            "validation_kind": "grand_ukupno",
+            "message": (
+                f"Pokazuje na grand UKUPNO sheeta '{entry['name']}' "
+                f"(red {target_row})."
+            ),
+            "target_label": u.get("label"),
+        }
+    if target_row in entry["ukupno_rows"]:
+        u = entry["ukupno_rows"][target_row]
+        return {
+            **ref,
+            "validation_status": "ok",
+            "validation_kind": "sub_ukupno",
+            "message": (
+                f"Pokazuje na podgrupni UKUPNO sheeta '{entry['name']}' "
+                f"(red {target_row}: {u.get('label', 'UKUPNO')})."
+            ),
+            "target_label": u.get("label"),
+        }
+    if target_row in entry["math_rows"]:
+        return {
+            **ref,
+            "validation_status": "fail",
+            "validation_kind": "math_row",
+            "message": (
+                f"Pokazuje na pojedinačnu math stavku u retku {target_row} "
+                f"sheeta '{entry['name']}' — trebao bi pokazivati na UKUPNO."
+            ),
+        }
+    return {
+        **ref,
+        "validation_status": "warn",
+        "validation_kind": "unknown",
+        "message": (
+            f"Referenca na red {target_row} u sheetu '{entry['name']}' "
+            f"nije prepoznata ni kao stavka ni kao UKUPNO."
+        ),
+    }
+
 
 def _build_formula_cache(cached_ws) -> dict[tuple[int, int], Any]:
     """Build a (row, col) -> calculated value map for an entire sheet so
@@ -999,7 +1678,7 @@ def parse_canonical_xlsx(path: Path) -> ParsedDocument:
                 sheet_items = parse_rekapitulacija_sheet(ws, ws.title, cache)
             else:
                 # opci_uvjeti — free-text per row, no structured math
-                sheet_items = _raw_text_items(ws, ws.title)
+                sheet_items = _raw_text_items(ws, ws.title, cache)
                 for it in sheet_items:
                     it.metadata["kind"] = kind
 
@@ -1011,6 +1690,22 @@ def parse_canonical_xlsx(path: Path) -> ParsedDocument:
     finally:
         wb.close()
         wb_cached.close()
+
+    # Document-wide registry of UKUPNO rows + math rows. Used to validate
+    # cross-sheet references in rekapitulacija lines: a recap_line's
+    # `=zemljani!F46` should point at zemljani's grand UKUPNO row, not at
+    # some random math row.
+    registry = _build_document_registry(items)
+    for item in items:
+        meta = item.metadata or {}
+        if meta.get("kind") != "recap_line":
+            continue
+        refs = meta.get("cross_sheet_refs") or []
+        if not refs:
+            continue
+        meta["ref_validation"] = [
+            _validate_cross_sheet_ref(ref, registry) for ref in refs
+        ]
 
     return ParsedDocument(
         items=items,

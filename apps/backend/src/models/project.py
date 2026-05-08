@@ -26,6 +26,10 @@ class Project(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # Optional path to a project logo file (uploaded to local storage).
+    # Used by the PDF report header alongside the Lexitor wordmark. Null
+    # → PDF falls back to rendering the project name as text.
+    logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     users: Mapped[list[User]] = relationship(back_populates="project", cascade="all, delete-orphan")
     documents: Mapped[list[Document]] = relationship(

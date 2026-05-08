@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { HighlightedText } from "@/components/HighlightedText";
 import { StatusDot, statusAccent, statusLabel } from "@/components/StatusBadge";
+import { api } from "@/lib/api";
 import type {
   AnalysisItemPublic,
   AnalysisStatus,
   AnalysisSummary,
   CitationPublic,
+  UserVerdict,
 } from "@/lib/types";
 
 function getSheet(item: AnalysisItemPublic): string {
@@ -31,9 +33,14 @@ interface Props {
   items: AnalysisItemPublic[];
   summary: AnalysisSummary | null;
   error: string | null;
+  analysisId: string;
 }
 
-export function AnalysisResults({ status, progress, items, summary, error }: Props) {
+/** Context so deeply-nested cards can call the feedback PATCH endpoint
+ *  without prop-drilling analysisId through every layout component. */
+const AnalysisIdContext = createContext<string>("");
+
+export function AnalysisResults({ status, progress, items, summary, error, analysisId }: Props) {
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
   const [visibleId, setVisibleId] = useState<string | null>(null);
 
@@ -104,6 +111,7 @@ export function AnalysisResults({ status, progress, items, summary, error }: Pro
   };
 
   return (
+    <AnalysisIdContext.Provider value={analysisId}>
     <div className="flex flex-col gap-4 h-[calc(100vh-200px)]">
       <Header status={status} progress={progress} summary={summary} error={error} count={items.length} />
 
@@ -173,6 +181,7 @@ export function AnalysisResults({ status, progress, items, summary, error }: Pro
         </div>
       </div>
     </div>
+    </AnalysisIdContext.Provider>
   );
 }
 
@@ -198,54 +207,49 @@ function SheetTabs({
   countsBySheet: Record<string, number>;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(sheetNames.length);
 
-  // Measure ghost tabs and decide how many fit in the visible row.
-  useLayoutEffect(() => {
-    function measure() {
-      const container = containerRef.current;
-      const ghost = ghostRef.current;
-      if (!container || !ghost) return;
-      const ghostTabs = Array.from(
-        ghost.querySelectorAll<HTMLElement>("[data-ghost-tab]"),
+  // Track scroll position so the arrow buttons hide when there's
+  // nothing more to scroll in that direction.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => {
+      setCanScrollLeft(el.scrollLeft > 1);
+      setCanScrollRight(
+        el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
       );
-      if (ghostTabs.length === 0) return;
-      const containerWidth = container.clientWidth;
-      const dropdownReserve = 84; // approx width of "Više ▾" button incl. border
-      const gap = 4; // tailwind gap-1
-
-      // Try fitting all tabs first (no dropdown)
-      const totalWidth = ghostTabs.reduce(
-        (acc, el, i) => acc + el.offsetWidth + (i > 0 ? gap : 0),
-        0,
-      );
-      if (totalWidth <= containerWidth) {
-        setVisibleCount(sheetNames.length);
-        return;
-      }
-
-      const limit = containerWidth - dropdownReserve;
-      let used = 0;
-      let count = 0;
-      for (let i = 0; i < ghostTabs.length; i++) {
-        const w = ghostTabs[i].offsetWidth + (i > 0 ? gap : 0);
-        if (used + w > limit) break;
-        used += w;
-        count++;
-      }
-      setVisibleCount(Math.max(1, count));
-    }
-
-    measure();
-    const ro = new ResizeObserver(measure);
-    if (containerRef.current) ro.observe(containerRef.current);
-    return () => ro.disconnect();
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
   }, [sheetNames]);
 
-  // Close menu on outside click + escape
+  // Scroll the active tab into view whenever it changes — handles both
+  // user clicks on hidden tabs (via dropdown) and programmatic sheet
+  // switches at start of analysis.
+  useEffect(() => {
+    if (!activeSheet) return;
+    const tab = tabRefs.current.get(activeSheet);
+    if (tab) {
+      tab.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+  }, [activeSheet]);
+
+  // Close menu on outside click / Escape
   useEffect(() => {
     if (!menuOpen) return;
     const onClick = (e: MouseEvent) => {
@@ -262,119 +266,127 @@ function SheetTabs({
     };
   }, [menuOpen]);
 
-  const visibleTabs = sheetNames.slice(0, visibleCount);
-  const hiddenTabs = sheetNames.slice(visibleCount);
-  const hasHidden = hiddenTabs.length > 0;
-  const activeIsHidden =
-    activeSheet !== null && hiddenTabs.includes(activeSheet);
+  const scrollBy = (dir: 1 | -1) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(240, el.clientWidth * 0.6), behavior: "smooth" });
+  };
 
   return (
-    <>
-      {/* Off-screen ghost row for measurement only — never visible. */}
-      <div
-        ref={ghostRef}
-        aria-hidden
-        className="invisible pointer-events-none fixed -top-[9999px] left-0 flex gap-1"
-      >
-        {sheetNames.map((name) => (
-          <span
-            key={name}
-            data-ghost-tab
-            className="shrink-0 px-3 py-2 text-sm whitespace-nowrap"
-          >
-            {name}
-            <span className="ml-2 text-xs">{countsBySheet[name] ?? 0}</span>
-          </span>
-        ))}
-      </div>
-
-      <div
-        ref={wrapRef}
-        className="relative flex items-stretch border-b border-brand-border"
-      >
-        <div
-          ref={containerRef}
-          className="flex gap-1 flex-1 min-w-0 overflow-hidden pb-px -mb-px"
+    <div
+      ref={wrapRef}
+      className="relative flex items-stretch border-b border-brand-border"
+    >
+      {/* Left arrow — fades over the leftmost edge when overflow exists */}
+      {canScrollLeft && (
+        <button
+          type="button"
+          onClick={() => scrollBy(-1)}
+          aria-label="Skrolaj tabove lijevo"
+          className="absolute left-0 top-0 bottom-0 z-10 flex items-center px-2 bg-gradient-to-r from-white via-white to-transparent text-navy hover:text-ink"
         >
-          {visibleTabs.map((name) => {
-            const isActive = name === activeSheet;
-            return (
-              <button
-                key={name}
-                type="button"
-                onClick={() => onSelect(name)}
-                className={`shrink-0 px-3 py-2 text-sm whitespace-nowrap border-b-2 transition ${
-                  isActive
-                    ? "border-ink text-ink font-medium"
-                    : "border-transparent text-muted hover:text-ink"
-                }`}
-              >
-                {name}
-                <span className="ml-2 text-xs text-muted">{countsBySheet[name] ?? 0}</span>
-              </button>
-            );
-          })}
-        </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+      )}
 
-        {hasHidden && (
-          <div className="relative flex items-stretch border-l border-brand-border shrink-0 bg-surface">
+      <div
+        ref={scrollRef}
+        className="flex gap-1 flex-1 min-w-0 overflow-x-auto pb-px -mb-px [&::-webkit-scrollbar]:hidden"
+        style={{ scrollbarWidth: "none" }}
+      >
+        {sheetNames.map((name) => {
+          const isActive = name === activeSheet;
+          return (
             <button
+              key={name}
+              ref={(el) => {
+                if (el) tabRefs.current.set(name, el);
+                else tabRefs.current.delete(name);
+              }}
               type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              className={`px-3 py-2 text-sm transition flex items-center gap-1 border-b-2 ${
-                activeIsHidden
+              onClick={() => onSelect(name)}
+              className={`shrink-0 px-3 py-2 text-sm whitespace-nowrap border-b-2 transition ${
+                isActive
                   ? "border-ink text-ink font-medium"
-                  : "border-transparent text-navy hover:text-ink hover:bg-surface-2"
+                  : "border-transparent text-muted hover:text-ink"
               }`}
             >
-              Više
-              <span className="text-xs text-muted">+{hiddenTabs.length}</span>
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
+              {name}
+              <span className="ml-2 text-xs text-muted">{countsBySheet[name] ?? 0}</span>
             </button>
-            {menuOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-20 mt-1 w-72 max-h-80 overflow-y-auto rounded-md border border-brand-border bg-white shadow-lg py-1"
-              >
-                {hiddenTabs.map((name) => {
-                  const isActive = name === activeSheet;
-                  return (
-                    <button
-                      key={name}
-                      role="menuitem"
-                      type="button"
-                      onClick={() => {
-                        onSelect(name);
-                        setMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-3 hover:bg-surface-2 transition ${
-                        isActive ? "font-medium text-ink bg-surface-2" : "text-navy"
-                      }`}
-                    >
-                      <span className="truncate">{name}</span>
-                      <span className="text-xs text-muted shrink-0">
-                        {countsBySheet[name] ?? 0}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+          );
+        })}
+      </div>
+
+      {/* Right arrow — fades over the rightmost edge when overflow exists.
+          Sits to the LEFT of the dropdown button so the gradient blends
+          into the scrollable area without covering the menu trigger. */}
+      {canScrollRight && (
+        <button
+          type="button"
+          onClick={() => scrollBy(1)}
+          aria-label="Skrolaj tabove desno"
+          className="absolute right-10 top-0 bottom-0 z-10 flex items-center px-2 bg-gradient-to-l from-white via-white to-transparent text-navy hover:text-ink"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+      )}
+
+      {/* Always-visible dropdown menu of all sheets */}
+      <div className="relative flex items-stretch border-l border-brand-border shrink-0 bg-white">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="Otvori popis svih tabova"
+          className="px-3 py-2 text-sm text-navy hover:text-ink hover:bg-surface-2 transition flex items-center gap-1"
+          title="Svi tabovi"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 top-full z-30 mt-1 w-72 max-h-96 overflow-y-auto rounded-md border border-brand-border bg-white shadow-lg py-1"
+          >
+            {sheetNames.map((name) => {
+              const isActive = name === activeSheet;
+              return (
+                <button
+                  key={name}
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    onSelect(name);
+                    setMenuOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-3 hover:bg-surface-2 transition ${
+                    isActive ? "font-medium text-ink bg-surface-2" : "text-navy"
+                  }`}
+                >
+                  <span className="truncate">{name}</span>
+                  <span className="text-xs text-muted shrink-0 tabular-nums">
+                    {countsBySheet[name] ?? 0}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -587,6 +599,33 @@ function ProvjeraCell({
   return <span className="text-[#3F7D45] text-xs">✓ točno</span>;
 }
 
+/** Append a browser text-fragment (#:~:text=…) to a citation URL so that
+ *  clicking "otvori izvor" scrolls to the referenced clanak/article on
+ *  the destination page. Supported in Chromium-based browsers and Safari
+ *  15+; Firefox falls back gracefully (link still opens, just no scroll). */
+function citationUrlWithFragment(c: CitationPublic): string {
+  if (!c.url) return "";
+  // Strip any existing text-fragment so we don't double-append.
+  const baseUrl = c.url.split("#:~:")[0];
+
+  // Pull the most specific anchor we can from the reference. Common
+  // patterns: "Članak 207. ZJN", "Članak 207a", "Čl. 99 stavak 3",
+  // "Article 18", or sometimes just a numeric reference.
+  const ref = c.reference || "";
+  const m =
+    ref.match(/(?:članak|čl\.?|article|art\.?)\s*(\d+[a-z]?)/i) ??
+    ref.match(/^\s*(\d+[a-z]?)\s*$/);
+  if (!m) return baseUrl;
+
+  const articleNum = m[1];
+  // Most NN/EU pages render the heading as "Članak NNN" or "Article NNN".
+  // We try both with text-fragment OR-encoding (text=A,B not supported,
+  // but "Članak 207" alone is reliable enough as the first hit).
+  const fragmentText = `Članak ${articleNum}`;
+  const encoded = encodeURIComponent(fragmentText).replace(/%20/g, "%20");
+  return `${baseUrl}#:~:text=${encoded}`;
+}
+
 function kindLabel(kind: string, isRollup = false): string {
   switch (kind) {
     case "recap_subtotal":
@@ -598,7 +637,7 @@ function kindLabel(kind: string, isRollup = false): string {
     case "recap_pdv":
       return "Rekapitulacija — PDV";
     case "recap_line":
-      return "Rekapitulacija — stavka";
+      return "Rekapitulacija — pozicija";
     case "recap_extra":
       return "Rekapitulacija — dodatak";
     case "recap_section":
@@ -607,6 +646,59 @@ function kindLabel(kind: string, isRollup = false): string {
     default:
       return isRollup ? "Rollup suma" : "Grupna suma";
   }
+}
+
+function OpciUvjetiDetail({
+  item,
+  accent,
+  label,
+}: {
+  item: AnalysisItemPublic;
+  accent: string;
+  label: string;
+}) {
+  const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
+  const row = typeof meta.row === "number" ? meta.row : null;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-3 items-start">
+      {/* LEFT (2/3) — opći uvjeti tekst */}
+      <article
+        className="rounded-lg border border-brand-border bg-white p-5 lg:col-span-2 border-l-4"
+        style={{ borderLeftColor: accent }}
+      >
+        <header className="flex items-start justify-between gap-4 mb-2">
+          <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
+            Opći uvjeti
+          </span>
+        </header>
+        <div className="flex gap-3">
+          <span
+            className="text-[11px] text-muted font-mono shrink-0 w-8 text-right pt-px tabular-nums"
+            title="Excel red"
+          >
+            {row ?? ""}
+          </span>
+          <p className="text-sm text-navy leading-relaxed whitespace-pre-line max-w-prose">
+            {item.text}
+          </p>
+        </div>
+      </article>
+
+      {/* RIGHT (1/3) — Lexitor analiza (proizvođači mogu se pojaviti i u
+          opći-uvjeti tekstovima, pa svaki red dobija svoju analizu) */}
+      <div className="lg:col-span-1 flex flex-col gap-3">
+        <FindingCard
+          accent={accent}
+          label={label}
+          explanation={item.explanation}
+          suggestion={item.suggestion}
+          citations={item.citations}
+          item={item}
+        />
+      </div>
+    </div>
+  );
 }
 
 function SectionHeaderDetail({
@@ -651,6 +743,10 @@ interface CrossSheetRef {
   sheet: string;
   col: string;
   row: number;
+  validation_status?: "ok" | "warn" | "fail";
+  validation_kind?: string;
+  message?: string;
+  target_label?: string | null;
 }
 
 function RecapLineDetail({
@@ -667,11 +763,35 @@ function RecapLineDetail({
   const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
   const titleRow = typeof meta.title_row === "number" ? meta.title_row : null;
   const formula = typeof meta.formula === "string" ? meta.formula : null;
-  const refs: CrossSheetRef[] = Array.isArray(meta.cross_sheet_refs)
+  // Prefer the validated refs (parser enriches them with status + message)
+  // when available; fall back to the raw refs from the formula.
+  const validatedRefs: CrossSheetRef[] = Array.isArray(meta.ref_validation)
+    ? (meta.ref_validation as CrossSheetRef[])
+    : [];
+  const rawRefs: CrossSheetRef[] = Array.isArray(meta.cross_sheet_refs)
     ? (meta.cross_sheet_refs as CrossSheetRef[])
     : [];
+  const refs: CrossSheetRef[] =
+    validatedRefs.length > 0 ? validatedRefs : rawRefs;
   const iznos = (meta.iznos as number | string | null | undefined) ?? null;
   const section = typeof meta.section === "string" ? meta.section : null;
+
+  function refStyle(status?: string): string {
+    if (status === "fail")
+      return "bg-[#A8392B]/10 text-[#A8392B] border border-[#A8392B]/30";
+    if (status === "warn")
+      return "bg-[#A87F2E]/10 text-[#A87F2E] border border-[#A87F2E]/30";
+    if (status === "ok")
+      return "bg-[#3F7D45]/10 text-[#3F7D45] border border-[#3F7D45]/30";
+    return "bg-signal/10 text-signal";
+  }
+
+  function refIcon(status?: string): string {
+    if (status === "ok") return "✓";
+    if (status === "fail") return "✗";
+    if (status === "warn") return "?";
+    return "→";
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-3 items-start">
@@ -713,15 +833,22 @@ function RecapLineDetail({
           )}
           {refs.length > 0 && (
             <div className="text-sm">
-              <span className="text-muted">Referencira:</span>{" "}
-              <ul className="inline-flex flex-wrap gap-2 ml-1">
+              <span className="text-muted">Referencira:</span>
+              <ul className="flex flex-wrap gap-2 mt-1">
                 {refs.map((r, idx) => (
                   <li
                     key={idx}
-                    className="font-mono text-xs text-signal bg-signal/10 px-2 py-0.5 rounded"
+                    className={`font-mono text-xs px-2 py-0.5 rounded ${refStyle(r.validation_status)}`}
+                    title={r.message}
                   >
+                    <span className="mr-1">{refIcon(r.validation_status)}</span>
                     {r.sheet}!{r.col}
                     {r.row}
+                    {r.target_label && (
+                      <span className="ml-2 opacity-75 normal-case">
+                        ({r.target_label})
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -742,6 +869,7 @@ function RecapLineDetail({
           explanation={item.explanation}
           suggestion={item.suggestion}
           citations={item.citations}
+          item={item}
         />
       </div>
     </div>
@@ -909,6 +1037,7 @@ function GroupSumDetail({
           explanation={item.explanation}
           suggestion={item.suggestion}
           citations={item.citations}
+          item={item}
         />
       </div>
     </div>
@@ -918,8 +1047,23 @@ function GroupSumDetail({
 function ItemDetail({ item }: { item: AnalysisItemPublic }) {
   const accent = statusAccent(item.status);
   const label = statusLabel(item.status);
-  const { rb, title } = splitLabel(item.label);
   const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
+  // Prefer parser-provided rb/title (explicit). Fall back to splitLabel
+  // for older items or sheets where the parser didn't set them.
+  const metaRb = typeof meta.rb === "string" ? meta.rb : null;
+  const metaTitle = typeof meta.title === "string" ? meta.title : null;
+  const split = splitLabel(item.label);
+  const rb = metaRb ?? split.rb;
+  // Three cases for title:
+  //   - parser sent a non-empty string → use it
+  //   - parser sent "" → opis was a descriptive paragraph; suppress h2
+  //   - parser didn't set the field → fall back to splitLabel
+  const title =
+    metaTitle === null
+      ? split.title
+      : metaTitle.trim()
+        ? metaTitle
+        : null;
   const kind = typeof meta.kind === "string" ? meta.kind : "stavka";
   const isGroupSum = kind === "group_sum";
   const isRecapSection = kind === "recap_section";
@@ -951,6 +1095,9 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     return (
       <RecapLineDetail item={item} accent={accent} label={label} kind={kind} />
     );
+  }
+  if (kind === "opci_uvjeti" || kind === "raw_text") {
+    return <OpciUvjetiDetail item={item} accent={accent} label={label} />;
   }
 
   // Build per-line segments mapped to their Excel row + char offsets in
@@ -998,17 +1145,38 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
       .map((h) => ({ ...h, start: h.start - seg.start, end: h.end - seg.start }));
   }
 
-  // The right column is a vertical stack so a single stavka can carry
-  // multiple Lexitor findings (e.g., one card for "brand mention", another
-  // for "decimal precision"). For now the API still returns one finding
-  // per item — render it as the only card in the stack.
-  const findings = [{
-    accent,
-    label,
-    explanation: item.explanation,
-    suggestion: item.suggestion,
-    citations: item.citations,
-  }];
+  // The right column stacks one card per Lexitor finding. A stavka can
+  // carry several at once — e.g. brand_lock + arithmetic + missing_jm.
+  // When item.findings is set (new-style), one card per entry; otherwise
+  // fall back to the legacy single explanation/suggestion fields.
+  const findings = (item.findings && item.findings.length > 0
+    ? item.findings.map((f) => ({
+        accent: statusAccent(f.status),
+        label: statusLabel(f.status),
+        explanation: f.explanation,
+        suggestion: f.suggestion,
+        citations: f.citations.map((c, idx) => ({
+          id: `${item.id}-${f.kind}-${idx}`,
+          source: (c.source as CitationPublic["source"]) ?? "other",
+          reference: c.reference,
+          snippet: c.snippet ?? "",
+          url: c.url ?? null,
+        })),
+        item,
+        isMock: f.is_mock,
+      }))
+    : [
+        {
+          accent,
+          label,
+          explanation: item.explanation,
+          suggestion: item.suggestion,
+          citations: item.citations,
+          item,
+          isMock:
+            !!item.explanation && item.explanation.startsWith("<<DEMO>>"),
+        },
+      ]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-3 items-start">
@@ -1167,19 +1335,201 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
   );
 }
 
+/** Per-finding feedback controls (Phase A of the PDF-export workflow):
+ *  ✓ Točno / ✗ Pogrešno verdict, optional comment (mandatory when
+ *  verdict=incorrect), and an "include in PDF" toggle. Autosaves to
+ *  /analyses/{id}/items/{item_id} on every change with a 700 ms
+ *  debounce on the comment field. */
+function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
+  const analysisId = useContext(AnalysisIdContext);
+  const [verdict, setVerdict] = useState<UserVerdict | null>(
+    item.user_verdict ?? null,
+  );
+  const [comment, setComment] = useState<string>(item.user_comment ?? "");
+  const [includeInPdf, setIncludeInPdf] = useState<boolean>(
+    item.include_in_pdf ?? true,
+  );
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const commentTimer = useRef<number | null>(null);
+  const savedNotice = useRef<number | null>(null);
+
+  // Sync local state when the parent reloads the item from the server
+  // (e.g., after an SSE refresh).
+  useEffect(() => {
+    setVerdict(item.user_verdict ?? null);
+    setComment(item.user_comment ?? "");
+    setIncludeInPdf(item.include_in_pdf ?? true);
+  }, [item.id, item.user_verdict, item.user_comment, item.include_in_pdf]);
+
+  const flashSaved = useCallback(() => {
+    if (savedNotice.current) window.clearTimeout(savedNotice.current);
+    setSaveState("saved");
+    savedNotice.current = window.setTimeout(() => {
+      setSaveState((s) => (s === "saved" ? "idle" : s));
+    }, 1500);
+  }, []);
+
+  const persist = useCallback(
+    async (
+      payload: Parameters<typeof api.updateItemFeedback>[2],
+    ) => {
+      if (!analysisId) return;
+      setSaveState("saving");
+      setErrorMsg(null);
+      try {
+        await api.updateItemFeedback(analysisId, item.id, payload);
+        flashSaved();
+      } catch (e) {
+        setSaveState("error");
+        setErrorMsg(e instanceof Error ? e.message : "Greška pri spremanju.");
+      }
+    },
+    [analysisId, item.id, flashSaved],
+  );
+
+  const setVerdictAndSave = (next: UserVerdict | null) => {
+    if (next === verdict) {
+      // Toggling off → clear verdict + comment
+      setVerdict(null);
+      setComment("");
+      void persist({ clear_verdict: true });
+      return;
+    }
+    setVerdict(next);
+    if (next === "correct") {
+      // Correct → comment optional; persist verdict, keep existing comment
+      void persist({ user_verdict: "correct" });
+    }
+    // For "incorrect", wait for non-empty comment (server requires it)
+    // Client persists once user types something.
+  };
+
+  const onCommentChange = (val: string) => {
+    setComment(val);
+    if (commentTimer.current) window.clearTimeout(commentTimer.current);
+    commentTimer.current = window.setTimeout(() => {
+      // Only persist if verdict is set; for incorrect, comment must be
+      // non-empty before server accepts.
+      if (verdict === "incorrect" && !val.trim()) return;
+      if (verdict === null && !val.trim()) return;
+      void persist({
+        user_verdict: verdict,
+        user_comment: val,
+      });
+    }, 700);
+  };
+
+  const onIncludeChange = (val: boolean) => {
+    setIncludeInPdf(val);
+    void persist({ include_in_pdf: val });
+  };
+
+  const showCommentField =
+    verdict !== null || (comment && comment.length > 0);
+
+  return (
+    <div className="mt-6 pt-4 border-t border-brand-border space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setVerdictAndSave("correct")}
+          aria-pressed={verdict === "correct"}
+          className={`rounded-md border px-3 py-1.5 text-sm transition ${
+            verdict === "correct"
+              ? "border-[#3F7D45] bg-[#3F7D45]/10 text-[#2C5832] font-medium"
+              : "border-brand-border text-navy hover:border-ink"
+          }`}
+        >
+          ✓ Točno
+        </button>
+        <button
+          type="button"
+          onClick={() => setVerdictAndSave("incorrect")}
+          aria-pressed={verdict === "incorrect"}
+          className={`rounded-md border px-3 py-1.5 text-sm transition ${
+            verdict === "incorrect"
+              ? "border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium"
+              : "border-brand-border text-navy hover:border-ink"
+          }`}
+        >
+          ✗ Pogrešno
+        </button>
+        <span
+          className={`text-[11px] ml-auto ${
+            saveState === "error" ? "text-[#A8392B]" : "text-muted"
+          }`}
+          aria-live="polite"
+        >
+          {saveState === "saving" && "Spremam…"}
+          {saveState === "saved" && "Spremljeno ✓"}
+          {saveState === "error" && (errorMsg ?? "Greška")}
+        </span>
+      </div>
+
+      {showCommentField && (
+        <div>
+          <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
+            Komentar
+            {verdict === "incorrect" && (
+              <span className="ml-1 text-[#A8392B] normal-case">obavezno</span>
+            )}
+          </label>
+          <textarea
+            value={comment}
+            onChange={(e) => onCommentChange(e.target.value)}
+            rows={2}
+            placeholder={
+              verdict === "incorrect"
+                ? "Zašto je nalaz pogrešan?"
+                : "Opcionalno objašnjenje…"
+            }
+            className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
+          />
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 text-sm text-navy cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={includeInPdf}
+          onChange={(e) => onIncludeChange(e.target.checked)}
+          className="rounded border-brand-border"
+        />
+        <span>Uključi u PDF izvještaj</span>
+      </label>
+    </div>
+  );
+}
+
+
 function FindingCard({
   accent,
   label,
   explanation,
   suggestion,
   citations,
+  item,
+  isMock = false,
 }: {
   accent: string;
   label: string;
   explanation: string | null;
   suggestion: string | null;
   citations: CitationPublic[];
+  item: AnalysisItemPublic;
+  isMock?: boolean;
 }) {
+  // Legacy fallback: older items used a "<<DEMO>>" prefix in
+  // explanation to mark mock findings. Strip it; the isMock prop now
+  // carries the same signal explicitly when item.findings is set.
+  const legacyMock =
+    !!explanation && explanation.startsWith("<<DEMO>>");
+  const cleanedExplanation = legacyMock
+    ? explanation.replace(/^<<DEMO>>\s*/, "")
+    : explanation;
+  const showMockBadge = isMock || legacyMock;
+
   return (
     <article
       className="rounded-lg border border-brand-border bg-white p-6 border-l-4"
@@ -1202,9 +1552,20 @@ function FindingCard({
         </span>
       </header>
 
-      {explanation && (
+      {showMockBadge && (
+        <div className="mb-3">
+          <span className="inline-block font-bold text-xs tracking-wider text-[#00BFD8]">
+            &lt;&lt;DEMO&gt;&gt;
+          </span>
+          <span className="ml-2 text-[11px] text-muted normal-case">
+            random mock — ne stvarni nalaz
+          </span>
+        </div>
+      )}
+
+      {cleanedExplanation && (
         <Section accent={accent} title="Zašto">
-          {explanation}
+          {cleanedExplanation}
         </Section>
       )}
 
@@ -1233,7 +1594,7 @@ function FindingCard({
                   <>
                     {" · "}
                     <a
-                      href={c.url}
+                      href={citationUrlWithFragment(c)}
                       target="_blank"
                       rel="noreferrer"
                       className="text-signal hover:underline"
@@ -1248,32 +1609,7 @@ function FindingCard({
         </>
       )}
 
-      <div className="mt-6 pt-4 border-t border-brand-border flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Ispravi
-        </button>
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Prihvati rizik
-        </button>
-        <button
-          type="button"
-          disabled
-          className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy disabled:opacity-50"
-          title="Implementacija u Sprintu 2"
-        >
-          Označi kao false positive
-        </button>
-      </div>
+      <FeedbackControls item={item} />
     </article>
   );
 }

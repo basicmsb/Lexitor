@@ -31,6 +31,15 @@ class AnalysisItemStatus(str, enum.Enum):
     UNCERTAIN = "uncertain"
 
 
+class UserVerdict(str, enum.Enum):
+    """User feedback on a Lexitor finding — does the user agree with it?
+    `correct` confirms the finding, `incorrect` disputes it (and a
+    comment explaining why is mandatory). null means no feedback yet."""
+
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+
+
 class Analysis(Base, TimestampMixin):
     __tablename__ = "analyses"
 
@@ -89,6 +98,27 @@ class AnalysisItem(Base, TimestampMixin):
     suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     highlights: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Multiple Lexitor findings per stavka. Each entry is a dict with:
+    # kind (e.g. "brand_lock"), status (per-finding severity),
+    # explanation, suggestion, is_mock (true for random demo), citations
+    # (list of {source, reference, snippet, url}). Item-level
+    # explanation/suggestion/status are kept for backwards compat as
+    # the aggregate (worst-status) finding.
+    findings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # User feedback on the finding (Phase A of the PDF-export workflow):
+    # — user_verdict null → no feedback yet
+    # — user_verdict CORRECT → user confirms the analyzer's finding
+    # — user_verdict INCORRECT → user disputes; user_comment is mandatory
+    # `include_in_pdf` controls whether this item appears in the
+    # exported PDF report.
+    user_verdict: Mapped[UserVerdict | None] = mapped_column(
+        Enum(UserVerdict, name="user_verdict"),
+        nullable=True,
+    )
+    user_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    include_in_pdf: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default="true",
+    )
 
     analysis: Mapped[Analysis] = relationship(back_populates="items")
     citations: Mapped[list[Citation]] = relationship(
