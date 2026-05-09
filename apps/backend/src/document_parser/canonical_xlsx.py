@@ -1014,11 +1014,21 @@ def parse_stavke_sheet(
             # rb-prefix match and absorb as a math row of the current
             # block. The full rb (e.g. "01.01.01") is preserved as part
             # of the podstavka label so users see the numbering.
+            #
+            # IZNIMKA (Fix #3, 2026-05-10): apsorpcija samo ako parent već
+            # ima math redove ili sam parent red (start_row) ima math. Kad
+            # parent NEMA math (npr. "7.1 ZEMLJANI RADOVI" header bez
+            # vrijednosti), to je section_header, a child "7.1.1" je
+            # zasebna stavka — NE apsorbiraj. Ovaj _ARH layout (parent
+            # section + djeca s math-om kao stavke) bio je pogrešno
+            # spajan u 1 stavku s 5 podstavki umjesto 5 zasebnih stavki.
+            parent_has_math = bool(current.math_rows)
             if (
                 not current.is_empty
                 and parent_rb
                 and has_math
                 and child_rb.startswith(parent_rb + ".")
+                and parent_has_math
             ):
                 current.add_math(row, mapping, offset, cache)
                 last_math = current.math_rows[-1]
@@ -1237,10 +1247,26 @@ def parse_stavke_sheet(
             depth = _section_depth(block.label)
             while section_stack and section_stack[-1]["depth"] >= depth and depth > 0:
                 section_stack.pop()
+            # Cumulative full_path: ako stack ima parent, novi label se
+            # prefiksa parent-ovim full_path-om (osim ako label već uključuje
+            # parent). Npr. stack=[{label:XI., full_path:XI.}], block.label="1."
+            # → full_path "XI.1.". Ovo pohranjeno u stack omogućuje
+            # _build_full_rb-u da koristi puni hijerarhijski path bez
+            # cumulative scan svaki put.
+            local_lbl = (block.label or "").rstrip(".")
+            if section_stack and local_lbl:
+                parent_full = section_stack[-1].get("full_path", "").rstrip(".")
+                if parent_full and not local_lbl.startswith(parent_full + "."):
+                    full_path = f"{parent_full}.{local_lbl}."
+                else:
+                    full_path = f"{local_lbl}."
+            else:
+                full_path = f"{local_lbl}." if local_lbl else ""
             section_stack.append(
                 {
                     "depth": depth,
                     "label": block.label,
+                    "full_path": full_path,
                     "title": block.title,
                     "row": block.start_row,
                 }
@@ -1359,30 +1385,52 @@ def _build_full_rb(stack: list[dict[str, Any]], local: str) -> str:
         section_header A.I.1.    ← stack push
         stavka         A.I.1.1.  ← rb je full path
 
-    U originalu je rb često samo "1." (lokalni segment) jer je parent path
-    samo u section header redovima iznad. Ova funkcija to popravlja:
-        stack=["2.7."], local="01." → "2.7.01."
-        stack=["A.","I.","1."], local="1." → "A.I.1.1."
+    Pravila (revizija 2026-05-10 nakon DV Netretić outlier):
 
-    Bez prepend-a kad local već uključuje parent path (idempotentno).
+    1. Ako local rb već ima ≥2 segmenta (npr. "XI.1.1.", "1.3.2."),
+       pretpostavi da je već full path → vrati as-is. Naručitelji koji
+       koriste full-path Excel layout (CONVEXO/Netretić tip) dobivaju
+       lokalni rb koji već reflektira hijerarhiju.
+
+    2. Ako local rb je jedan segment ("01.", "1.", "A."), prepend
+       zadnjeg section labela:
+           stack=[XI.], local=1. → XI.1.
+           stack=[2.7.], local=01. → 2.7.01.
+       Stack-ovi gdje su elementi već full path (XI., XI.1., XI.1.1.)
+       koristimo SAMO zadnji element kao prefix.
     """
     if not stack or not local:
         return local
-    parents = [s.get("label", "") for s in stack if s.get("label")]
-    if not parents:
+    # Koristimo cumulative full_path ako je dostupan (push gradi cumulative
+    # path: stack=[XI.→full_path=XI., 1.→full_path=XI.1.]). Fallback na
+    # label za stare push-eve bez full_path.
+    top = stack[-1] if stack else {}
+    parent_full = top.get("full_path") or top.get("label", "")
+    parent_clean = parent_full.rstrip(".")
+    local_clean = local.rstrip(".")
+    if not parent_clean or not local_clean:
         return local
-    # Već full path? Provjeri da li local počinje s parent_path konkateniran
-    parent_path = "".join(
-        p if p.endswith(".") else p + "." for p in parents
-    )
-    if local.startswith(parent_path):
+
+    # Idempotentno: ako local već počinje s parent full_path-om, ne prependa-ti.
+    #   stack[-1].full_path=XI.1., local=XI.1.1. → već je full → "XI.1.1."
+    if local_clean == parent_clean or local_clean.startswith(parent_clean + "."):
         return local
-    # Strip trailing dot iz svakog dijela pa spoji s točkom + finalna točka
-    stripped_parents = ".".join(p.rstrip(".") for p in parents if p.rstrip("."))
-    stripped_local = local.rstrip(".")
-    if not stripped_parents or not stripped_local:
+
+    # Overlap detection: ako parent zadnji segment matchira local prvi
+    # segment, drop dupliranje. CONVEXO primjer:
+    #   parent.full_path = "XI.1." (XI + section 1.)
+    #   local = "1.1."  (lokalni rb stavke u section 1.)
+    #   bez overlap-a: "XI.1.1.1." — KRIVO (4 segmenta)
+    #   s overlap-om: "XI.1.1."     — TOČNO
+    parent_segs = [s for s in parent_clean.split(".") if s]
+    local_segs = [s for s in local_clean.split(".") if s]
+    if parent_segs and local_segs and parent_segs[-1] == local_segs[0]:
+        merged_segs = parent_segs + local_segs[1:]
+    else:
+        merged_segs = parent_segs + local_segs
+    if not merged_segs:
         return local
-    return f"{stripped_parents}.{stripped_local}."
+    return ".".join(merged_segs) + "."
 
 
 _RECAP_GRAND_RE = re.compile(r"\bSVEUKUPN|GRAND\s*TOTAL|TOTAL\s*INC\b", re.IGNORECASE)

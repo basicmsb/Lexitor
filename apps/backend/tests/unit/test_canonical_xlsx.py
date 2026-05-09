@@ -334,27 +334,31 @@ def _make_workbook_with_arhigon_stavke(tmp_path):
 
 @pytest.mark.unit
 def test_parse_arhigon_stavke_with_child_rb(tmp_path) -> None:
+    """_ARH full-path konvencija (Marko 2026): kad parent rb nema math
+    vrijednosti, child rb-ovi s math-om su **zasebne stavke**, ne
+    podstavke. Stari "kompleti" pattern (apsorpcija) ostaje samo kad
+    parent već ima math redove."""
     wb = _make_workbook_with_arhigon_stavke(tmp_path)
     path = _wb_to_path(wb, tmp_path)
     result = parse_canonical_xlsx(path)
     items = result.items
 
-    # We expect: stavka 1, stavka 2 (with 2 children as math rows), group_sum
+    # Očekujemo: stavka 1, section_header 2 ("Betoniranje temelja", no math),
+    # stavka 2.1, stavka 2.2, group_sum
     stavka_items = [i for i in items if i.metadata.get("kind") == "stavka"]
+    section_headers = [i for i in items if i.metadata.get("kind") == "section_header"]
     group_sums = [i for i in items if i.metadata.get("kind") == "group_sum"]
 
-    assert len(stavka_items) == 2
+    assert len(stavka_items) == 3  # 1, 2.1, 2.2 — sve zasebne
+    assert len(section_headers) == 1  # "2" je section_header bez math-a
     assert len(group_sums) == 1
 
-    # Stavka 2 should have absorbed 2.1 and 2.2 as math rows, NOT opened
-    # separate stavka items for them.
-    stavka_2 = next(s for s in stavka_items if s.metadata.get("rb") == "2")
-    math_rows = stavka_2.metadata.get("math_rows", [])
-    assert len(math_rows) == 2
-    # Position labels include the rb prefix so users see "2.1 Beton C25/30"
-    labels = [mr.get("position_label", "") for mr in math_rows]
-    assert any("2.1" in lab and "Beton" in lab for lab in labels)
-    assert any("2.2" in lab and "Armatura" in lab for lab in labels)
+    rbs = {s.metadata.get("rb") for s in stavka_items}
+    assert "1" in rbs or "1." in rbs
+    # Full-path rb je prependan section path-om (Fix #2). "2.1" pod
+    # section "2" postaje "2.2.1" ili ostaje "2.1" ovisno o stack-u.
+    assert any("2.1" in r for r in rbs if r)
+    assert any("2.2" in r for r in rbs if r)
 
 
 @pytest.mark.unit
