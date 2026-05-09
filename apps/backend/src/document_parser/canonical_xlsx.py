@@ -139,7 +139,14 @@ def _match_roles(text: str) -> list[tuple[str, int]]:
     matches both "opis stavke" in opis and "stavka" in rb).
 
     Token mora biti cijela riječ — substring match unutar veće riječi
-    ('opis' u 'propisima') NE računa se."""
+    ('opis' u 'propisima') NE računa se.
+
+    Header label je kratak naslov tablice (max ~30 znakova), ne dugačka
+    rečenica. Tekst u opisu stavke "armatura je predmet posebne stavke"
+    sadrži header tokene (predmet, stavke) ali NIJE header — filtriramo
+    cellove duže od ~40 znakova."""
+    if not text or len(text) > 40:
+        return []
     norm = _normalise(text)
     if not norm:
         return []

@@ -114,14 +114,66 @@ def _is_rb(text: str) -> bool:
     return bool(_RB_RE.match(text))
 
 
+def _detect_layout(rows: list[tuple[Cell, ...]], cache: dict) -> str:
+    """Razlikuje Layout A (Marko-ov standard: A=rb, B=opis, C-F=math) od
+    Layout B (stariji predlošci: A=section formula, B=dinamic formula,
+    C=rb, D=opis, E-H=math). Layout B susrećemo u Westin/Abilia/EmiLu/EKP.
+
+    Vraća "A" ili "B". Default "A" ako nije jasno.
+
+    Heuristike, redom:
+    1. Header match: "opis"/"naziv stavke" u B → A, u D → B
+    2. Layout B telltale: B-stupac sadrži kompleksnu formulu na većini
+       redova (npr. `=IF(C3="","", A3&IF(...`). U Layout A B-stupac je
+       slobodan tekst opisa, nikad formula koja gleda druge stupce.
+    """
+    # 1. Header detekcija
+    for row in rows[:10]:
+        for col, layout in ((_COL_OPIS, "A"), (3, "B")):
+            val = _str(row, col, cache)
+            if not val:
+                continue
+            norm = _normalise(val)
+            if "opis" in norm or "naziv stavke" in norm:
+                return layout
+
+    # 2. B-formula telltale
+    sample = rows[:50] if len(rows) >= 50 else rows
+    formula_count = 0
+    text_count = 0
+    for row in sample:
+        cell = row[_COL_OPIS] if _COL_OPIS < len(row) else None
+        if cell is None or cell.value in (None, ""):
+            continue
+        if cell.data_type == "f":
+            formula_count += 1
+        else:
+            text_count += 1
+    # Ako je >70% B ćelija formula → Layout B
+    total = formula_count + text_count
+    if total > 5 and formula_count / total > 0.7:
+        return "B"
+
+    return "A"
+
+
 def _parse_arh_sheet(ws, cache: dict) -> list[ParsedItem]:
-    """Parsa jedan sheet po _ARH pravilima."""
+    """Parsa jedan sheet po _ARH pravilima (Layout A: A=rb, B=opis, C-F=math).
+
+    Layout B (C=rb, D=opis) je legacy predložak — preskačemo ga jer
+    nema dovoljno korisnika koji ga još koriste. Marko trenutno radi
+    samo Layout A, pa B je outlier."""
     rows = list(ws.iter_rows())
     items: list[ParsedItem] = []
     if not rows:
         return items
 
-    # _ARH ima header u R2 (vidjeli smo: 'red. / broj' | 'opis stavke' | …)
+    layout = _detect_layout(rows, cache)
+    if layout == "B":
+        # Layout B je stariji predložak (Westin/Abilia/EmiLu) — skipamo
+        return items
+
+    # _ARH Layout A: header u R2 (vidjeli smo: 'red. / broj' | 'opis stavke' | …)
     # Skip prvih ~3 retka — title + header. Heuristika: prvi red gdje
     # A ima rb ili B ima opis bez header riječi.
     header_idx = 0

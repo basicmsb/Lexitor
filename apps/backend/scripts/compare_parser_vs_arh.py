@@ -296,6 +296,8 @@ def main() -> int:
                         help="Preskoči parove gdje je bilo koji fajl veći od X MB (default 20)")
     parser.add_argument("--timeout", type=float, default=60.0,
                         help="Sekundi po paru prije nego abort (default 60)")
+    parser.add_argument("--since-months", type=int, default=0,
+                        help="Filtriraj parove gdje je _ARH stariji od X mjeseci (0 = sve)")
     args = parser.parse_args()
 
     if not args.root.exists():
@@ -314,6 +316,16 @@ def main() -> int:
     print(f"  samo _ARH: {len(only_arh)}", flush=True)
 
     work = paired
+    if args.since_months > 0:
+        import time
+        cutoff = time.time() - args.since_months * 30 * 24 * 3600
+        before = len(work)
+        work = [p for p in work if p.arh and p.arh.stat().st_mtime >= cutoff]
+        print(
+            f"  filter --since-months {args.since_months}: "
+            f"{before} → {len(work)} (skip {before-len(work)} starijih)",
+            flush=True,
+        )
     if args.limit:
         work = work[: args.limit]
 
