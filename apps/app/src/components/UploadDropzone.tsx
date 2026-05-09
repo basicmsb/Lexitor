@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { api } from "@/lib/api";
-import type { DocumentPublic, DocumentType } from "@/lib/types";
+import type { DocumentPublic, DocumentType, TroskovnikType } from "@/lib/types";
 
 const ACCEPT = ".pdf,.xlsx,.arhigonfile";
 
@@ -17,6 +17,9 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [troskovnikType, setTroskovnikType] =
+    useState<TroskovnikType>("nepoznato");
+  const showTypeSelector = documentType === "troskovnik";
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
@@ -25,7 +28,11 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
       setError(null);
       setUploading(true);
       try {
-        const doc = await api.uploadDocument(file, documentType);
+        const doc = await api.uploadDocument(
+          file,
+          documentType,
+          troskovnikType,
+        );
         onUploaded(doc);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload nije uspio.");
@@ -34,7 +41,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [documentType, onUploaded],
+    [documentType, onUploaded, troskovnikType],
   );
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -60,6 +67,55 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
 
   return (
     <div className="space-y-3">
+      {showTypeSelector && (
+        <div className="rounded-lg border border-brand-border bg-white p-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted mb-2">
+            Tip troškovnika
+          </div>
+          <div
+            className="grid gap-2 sm:grid-cols-3"
+            role="radiogroup"
+            aria-label="Tip troškovnika"
+          >
+            {(
+              [
+                {
+                  value: "ponudbeni" as const,
+                  label: "Ponudbeni",
+                  hint: "Jed. cijena prazna — ponuditelj popunjava",
+                },
+                {
+                  value: "procjena" as const,
+                  label: "Procjena",
+                  hint: "Jed. cijena popunjena — projektantska procjena",
+                },
+                {
+                  value: "nepoznato" as const,
+                  label: "Nepoznato",
+                  hint: "Ne primjenjuju se posebna pravila",
+                },
+              ]
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={troskovnikType === opt.value}
+                onClick={() => setTroskovnikType(opt.value)}
+                disabled={uploading}
+                className={`text-left rounded-md border px-3 py-2 transition ${
+                  troskovnikType === opt.value
+                    ? "border-ink bg-ink/5"
+                    : "border-brand-border hover:border-navy"
+                } ${uploading ? "opacity-60 pointer-events-none" : ""}`}
+              >
+                <div className="text-sm font-medium text-ink">{opt.label}</div>
+                <div className="text-[11px] text-muted leading-snug">{opt.hint}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}

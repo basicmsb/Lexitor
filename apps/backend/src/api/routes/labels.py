@@ -58,28 +58,74 @@ async def export_labels(
     result = await session.execute(stmt)
     items = result.scalars().all()
 
+    # Implicit acceptance pravilo (2026-05-09):
+    # — explicit ✗ Pogrešno / ✓ Točno → user_verdict je postavljen
+    # — + Dodaj nalaz → user_added_findings nije prazan
+    # — bez ničeg → ako je dokument "aktivno označavan" (ima bar 1 stavku
+    #   s eksplicitnim feedback-om), tretiramo kao implicit_correct
+    #   (korisnik je vidio i prešao bez prigovora). Inače dokument još
+    #   nije pregledan → ne ulazi u export.
+    docs_with_activity: set[uuid.UUID] = {
+        it.analysis.document_id
+        for it in items
+        if it.analysis is not None
+        and (it.user_verdict is not None or bool(it.user_added_findings))
+    }
+
     exported: list[dict[str, Any]] = []
     for it in items:
+        document = it.analysis.document if it.analysis else None
+        if document is None:
+            continue
+        if document.id not in docs_with_activity:
+            continue  # dokument nije pregledan — preskoči
+
         has_verdict = it.user_verdict is not None
         has_added = bool(it.user_added_findings)
-        if not has_verdict and not has_added:
-            continue  # ne-označeno → preskoči
+        has_la_findings = bool(it.findings)
+        item_kind = (it.metadata_json or {}).get("kind")
 
-        document = it.analysis.document if it.analysis else None
+        # Stavke bez ikakvog signala (no findings, no verdict, no added)
+        # nisu informativne kao few-shot: LA nije ništa rekao, korisnik
+        # nije ništa rekao. Prebacujemo samo ako ima bar jedan signal.
+        # Iznimka: svi non-stavka kindovi (opci_uvjeti, recap, section_header)
+        # ulaze samo ako imaju eksplicitan signal — automatska "uskladeno"
+        # za section_header nije korisno za LLM.
+        if not has_verdict and not has_added:
+            if not has_la_findings:
+                continue
+            if item_kind not in ("stavka", "opci_uvjeti"):
+                continue
+
+        # Resolved verdict: explicit ako postoji, inače implicit_correct
+        # kad LA ima nalaze ili je stavka (znači LA ništa nije našao i
+        # korisnik se nije bunio).
+        if has_verdict:
+            resolved_verdict = it.user_verdict.value
+            is_implicit = False
+        elif has_la_findings or item_kind == "stavka":
+            resolved_verdict = "correct"
+            is_implicit = True
+        else:
+            resolved_verdict = None
+            is_implicit = False
+
         exported.append(
             {
                 "item_id": str(it.id),
                 "analysis_id": str(it.analysis_id),
-                "document_id": str(document.id) if document else None,
-                "document_filename": document.filename if document else None,
+                "document_id": str(document.id),
+                "document_filename": document.filename,
+                "troskovnik_type": document.troskovnik_type.value,
                 "position": it.position,
                 "label": it.label,
-                "kind": (it.metadata_json or {}).get("kind"),
+                "kind": item_kind,
                 "text": it.text,
                 "metadata_json": it.metadata_json,
                 "la_findings": it.findings or [],
                 "la_status": it.status.value,
-                "user_verdict": it.user_verdict.value if it.user_verdict else None,
+                "user_verdict": resolved_verdict,
+                "is_implicit_verdict": is_implicit,
                 "user_comment": it.user_comment,
                 "include_in_pdf": it.include_in_pdf,
                 "user_added_findings": it.user_added_findings or [],

@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.schemas.document import DocumentList, DocumentPublic
-from src.models import Document, DocumentType
+from src.models import Document, DocumentType, TroskovnikType
 from src.services.document_service import (
     DocumentValidationError,
     save_uploaded_document,
@@ -27,6 +27,9 @@ async def upload_document(
     session: DbSession,
     file: Annotated[UploadFile, File(...)],
     document_type: Annotated[DocumentType, Form(...)] = DocumentType.TROSKOVNIK,
+    troskovnik_type: Annotated[
+        TroskovnikType, Form(...)
+    ] = TroskovnikType.NEPOZNATO,
 ) -> DocumentPublic:
     try:
         document = await save_uploaded_document(
@@ -34,9 +37,32 @@ async def upload_document(
             upload=file,
             user=current_user,
             document_type=document_type,
+            troskovnik_type=troskovnik_type,
         )
     except DocumentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return DocumentPublic.model_validate(document)
+
+
+@router.patch("/{document_id}", response_model=DocumentPublic)
+async def update_document_meta(
+    document_id: uuid.UUID,
+    current_user: CurrentUser,
+    session: DbSession,
+    troskovnik_type: Annotated[TroskovnikType | None, Form()] = None,
+) -> DocumentPublic:
+    """Override troškovnika tip nakon uploada (npr. ako je auto-detect
+    pogađao ili korisnik mijenja namjeru). Trenutno samo troskovnik_type;
+    proširivo na druga meta polja kasnije."""
+    document = await session.get(Document, document_id)
+    if document is None or document.project_id != current_user.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Dokument nije pronađen."
+        )
+    if troskovnik_type is not None:
+        document.troskovnik_type = troskovnik_type
+    await session.commit()
+    await session.refresh(document)
     return DocumentPublic.model_validate(document)
 
 

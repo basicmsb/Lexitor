@@ -7,7 +7,7 @@ import { AnalysisResults } from "@/components/AnalysisResults";
 import { useAnalysisStream } from "@/hooks/useAnalysisStream";
 import { API_BASE_URL, api } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-storage";
-import type { AnalysisItemPublic, DocumentPublic } from "@/lib/types";
+import type { AnalysisItemPublic, DocumentPublic, TroskovnikType } from "@/lib/types";
 
 export default function TroskovnikDetailPage() {
   const params = useParams<{ documentId: string }>();
@@ -66,6 +66,21 @@ export default function TroskovnikDetailPage() {
     }
   };
 
+  const changeTroskovnikType = async (next: TroskovnikType) => {
+    if (!document || next === document.troskovnik_type) return;
+    try {
+      const updated = await api.updateDocumentMeta(document.id, {
+        troskovnik_type: next,
+      });
+      setDocument(updated);
+      // Tip mijenja koja pravila fire-aju, pa pokrećemo novu analizu
+      // automatski da rezultati odgovaraju novom tipu.
+      await restart();
+    } catch (err) {
+      setBootstrapError(err instanceof Error ? err.message : "Promjena tipa nije uspjela.");
+    }
+  };
+
   const exportPdf = (onlyErrors: boolean) => {
     if (!analysisId) return;
     const token = getAccessToken();
@@ -114,6 +129,25 @@ export default function TroskovnikDetailPage() {
             ← Natrag na popis
           </button>
           <h1 className="font-display text-2xl text-ink">{document?.filename ?? "Analiza"}</h1>
+          {document && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
+                Tip troškovnika
+              </span>
+              <select
+                value={document.troskovnik_type}
+                onChange={(e) =>
+                  void changeTroskovnikType(e.target.value as TroskovnikType)
+                }
+                className="rounded-md border border-brand-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:border-ink"
+                title="Promjena tipa pokreće novu analizu"
+              >
+                <option value="ponudbeni">Ponudbeni (prazna jed. cijena)</option>
+                <option value="procjena">Procjena (popunjena jed. cijena)</option>
+                <option value="nepoznato">Nepoznato</option>
+              </select>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <div className="relative inline-flex rounded-md border border-brand-border overflow-hidden">

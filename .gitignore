@@ -14,8 +14,14 @@ secrets/
 # --- Pravna baza i korisnički dokumenti (NE u git!) ---
 data/
 !data/.gitkeep
+# Whitelist: samo brand lookup lista za analyzer (kurirana, ide u repo).
+# Cijeli `apps/backend/data/` ostaje ignoriran (zakoni, DKOM PDF-ovi, …).
+!apps/backend/data/brands.json
 uploads/
 output/
+
+# --- Generated reports / batch output ---
+apps/backend/reports/
 
 # --- Python ---
 __pycache__/

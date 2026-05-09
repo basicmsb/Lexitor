@@ -7,7 +7,7 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.document_parser import supported_extensions
-from src.models import Document, DocumentType, User
+from src.models import Document, DocumentType, TroskovnikType, User
 from src.utils.config import settings
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -39,6 +39,7 @@ async def save_uploaded_document(
     upload: UploadFile,
     user: User,
     document_type: DocumentType,
+    troskovnik_type: TroskovnikType | None = None,
 ) -> Document:
     if not upload.filename:
         raise DocumentValidationError("Nedostaje ime datoteke.")
@@ -66,6 +67,7 @@ async def save_uploaded_document(
         size_bytes=len(payload),
         storage_path=str(storage_path),
         document_type=document_type,
+        troskovnik_type=troskovnik_type or TroskovnikType.NEPOZNATO,
     )
     session.add(document)
     await session.commit()

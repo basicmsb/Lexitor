@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.models import AnalysisItemStatus
+from src.models import AnalysisItemStatus, TroskovnikType
 
 # ---------------------------------------------------------------------------
 # Citation placeholders
@@ -150,10 +150,20 @@ def rule_missing_kol(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def rule_missing_cijena(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
-    """Math row with quantity but no unit price — bidder doesn't know what
-    to fill in. Common in template troskovnici where "0,00 €" is left as
-    placeholder; better to flag it than auto-compute zero."""
+def rule_missing_cijena(
+    text: str,
+    meta: dict[str, Any],
+    troskovnik_type: TroskovnikType | None = None,
+) -> list[dict[str, Any]]:
+    """Math row with quantity but no unit price.
+
+    Pravilo ovisi o tipu troškovnika (vidi project_lexitor_troskovnik_tipovi.md):
+    - Ponudbeni: prazna jed. cijena je **očekivana** (popunjava ponuditelj)
+      → NE fire-amo nalaz
+    - Procjena: jed. cijena MORA biti popunjena → FAIL
+    - Nepoznato: ostaje WARN (kao prije)"""
+    if troskovnik_type == TroskovnikType.PONUDBENI:
+        return []
     rows = _math_rows(meta)
     missing = [
         r for r in rows
@@ -163,10 +173,15 @@ def rule_missing_cijena(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]
     ]
     if not missing:
         return []
+    severity = (
+        AnalysisItemStatus.FAIL
+        if troskovnik_type == TroskovnikType.PROCJENA
+        else AnalysisItemStatus.WARN
+    )
     return [
         _make(
             "missing_cijena",
-            AnalysisItemStatus.WARN,
+            severity,
             (
                 f"{len(missing)} math redaka ima količinu, ali jedinična "
                 f"cijena nije popunjena. Stavka se ne može vrednovati."
@@ -207,43 +222,17 @@ def rule_missing_opis(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-_SINGLE_DIGIT_RE = re.compile(r"^[\s\d.,]+$")
+def rule_zero_unit_price(
+    text: str,
+    meta: dict[str, Any],
+    troskovnik_type: TroskovnikType | None = None,
+) -> list[dict[str, Any]]:
+    """Unit price is exactly 0 with quantity > 0 — placeholder.
 
-
-def rule_vague_opis(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
-    """Description shorter than ~25 characters is rarely specific enough
-    to drive a competitive bid. We don't fire for trivially short stavke
-    that are part of a kompleti list (multiple math rows)."""
-    rows = _math_rows(meta)
-    if not text:
+    Za ponudbeni troškovnik 0,00 je očekivano (ponuditelj će popuniti),
+    pa NE fire-amo. Za procjenu i nepoznato fire-amo WARN."""
+    if troskovnik_type == TroskovnikType.PONUDBENI:
         return []
-    body = text.strip()
-    if len(body) >= 25:
-        return []
-    if _SINGLE_DIGIT_RE.match(body):
-        # Body is just numbers (rb only) — not a real description vagueness
-        return []
-    if len(rows) > 1:
-        # Multi-row kompleti — short label is OK when components carry context
-        return []
-    return [
-        _make(
-            "vague_opis",
-            AnalysisItemStatus.WARN,
-            (
-                f"Opis stavke je vrlo kratak ({len(body)} znakova). Ponuditelji "
-                f"trebaju više detalja: dimenzije, klasu, normu izvedbe, materijal."
-            ),
-            "Dodati ključne tehničke parametre u opis stavke.",
-            citations=[dict(_PLACEHOLDER_ZJN_207)],
-        )
-    ]
-
-
-def rule_zero_unit_price(text: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
-    """Unit price is exactly 0 with quantity > 0 — typical placeholder
-    that bidders will fill in. Worth flagging because the iznos auto-
-    computes to 0 and gets summed silently."""
     rows = _math_rows(meta)
     flagged = [
         r for r in rows
@@ -278,20 +267,36 @@ ALL_RULES = [
     rule_missing_jm,
     rule_missing_kol,
     rule_missing_cijena,
-    rule_vague_opis,
+    # rule_vague_opis je uklonjen 2026-05-09 — bez ground-truth korpusa
+    # "stručno napisanih stavki" (čeka Arhigon-ovu eksperizirano recenziranu
+    # bazu), brojanje znakova nije relevantna provjera.
     rule_zero_unit_price,
 ]
 
+# Rules koja prihvaćaju troskovnik_type (pravilo o praznoj jed. cijeni
+# ovisi o tipu — ponudbeni vs procjena, vidi project_lexitor_troskovnik_tipovi.md).
+_RULES_WITH_TYPE = {rule_missing_cijena, rule_zero_unit_price}
 
-def run_per_row_rules(text: str, meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+
+def run_per_row_rules(
+    text: str,
+    meta: dict[str, Any] | None,
+    troskovnik_type: TroskovnikType | None = None,
+) -> list[dict[str, Any]]:
     """Run every per-row rule. Returns a flat list of findings (possibly
     empty). Caller appends domain-specific findings (brand check,
-    arithmetic, group_sum, recap) on top."""
+    arithmetic, group_sum, recap) on top.
+
+    `troskovnik_type` se prosljeđuje samo onim pravilima koja ovise o
+    njemu (rule_missing_cijena, rule_zero_unit_price)."""
     metadata = meta or {}
     out: list[dict[str, Any]] = []
     for rule in ALL_RULES:
         try:
-            out.extend(rule(text or "", metadata))
+            if rule in _RULES_WITH_TYPE:
+                out.extend(rule(text or "", metadata, troskovnik_type))
+            else:
+                out.extend(rule(text or "", metadata))
         except Exception:
             # A single broken rule shouldn't take down the whole analysis;
             # log and continue. We deliberately don't re-raise.

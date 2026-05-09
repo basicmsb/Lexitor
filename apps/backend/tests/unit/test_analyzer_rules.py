@@ -14,10 +14,10 @@ from src.core.analyzer.rules import (
     rule_missing_jm,
     rule_missing_kol,
     rule_missing_opis,
-    rule_vague_opis,
     rule_zero_unit_price,
     run_per_row_rules,
 )
+from src.models import AnalysisItemStatus, TroskovnikType
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +77,48 @@ def test_missing_cijena_fires_when_kol_present_but_cijena_empty() -> None:
     findings = rule_missing_cijena("Iskop", meta)
     assert len(findings) == 1
     assert findings[0]["kind"] == "missing_cijena"
+    # Default (no type) → WARN
+    assert findings[0]["status"] == AnalysisItemStatus.WARN.value
+
+
+@pytest.mark.unit
+def test_missing_cijena_no_fire_for_ponudbeni_troskovnik() -> None:
+    """Ponudbeni: prazna jedinična cijena je OČEKIVANA (ponuditelj je
+    popunjava). Nije nalaz."""
+    meta = {"math_rows": [{"row": 5, "kol": 100, "cijena": None, "jm": "m3"}]}
+    findings = rule_missing_cijena("Iskop", meta, TroskovnikType.PONUDBENI)
+    assert findings == []
+
+
+@pytest.mark.unit
+def test_missing_cijena_fail_for_procjena_troskovnik() -> None:
+    """Procjena: cijena MORA biti popunjena → eskalira u FAIL."""
+    meta = {"math_rows": [{"row": 5, "kol": 100, "cijena": None, "jm": "m3"}]}
+    findings = rule_missing_cijena("Iskop", meta, TroskovnikType.PROCJENA)
+    assert len(findings) == 1
+    assert findings[0]["status"] == AnalysisItemStatus.FAIL.value
+
+
+@pytest.mark.unit
+def test_zero_unit_price_no_fire_for_ponudbeni_troskovnik() -> None:
+    meta = {"math_rows": [{"row": 5, "kol": 100, "cijena": 0, "jm": "m3"}]}
+    findings = rule_zero_unit_price("Iskop", meta, TroskovnikType.PONUDBENI)
+    assert findings == []
+
+
+@pytest.mark.unit
+def test_run_per_row_rules_respects_ponudbeni_type() -> None:
+    """run_per_row_rules prosljeđuje troskovnik_type pravilima koja ovise
+    o njemu. Ponudbeni: missing_cijena + zero_unit_price ne fire-aju."""
+    meta = {"math_rows": [{"row": 5, "kol": 100, "cijena": None, "jm": "m3"}]}
+    findings = run_per_row_rules(
+        "Iskop temelja u zemlji III ktg",
+        meta,
+        TroskovnikType.PONUDBENI,
+    )
+    kinds = {f["kind"] for f in findings}
+    assert "missing_cijena" not in kinds
+    assert "zero_unit_price" not in kinds
 
 
 # ---------------------------------------------------------------------------
@@ -109,37 +151,6 @@ def test_missing_opis_no_fire_when_position_label_present() -> None:
 def test_missing_opis_no_fire_when_text_present() -> None:
     meta = {"math_rows": [{"row": 5, "kol": 100, "cijena": 50, "jm": "m3"}]}
     assert rule_missing_opis("Iskop temelja u zemlji III ktg", meta) == []
-
-
-# ---------------------------------------------------------------------------
-# Vague opis
-
-
-@pytest.mark.unit
-def test_vague_opis_fires_for_short_text() -> None:
-    findings = rule_vague_opis("Iskop", {"math_rows": [{"row": 5, "kol": 1, "cijena": 1, "jm": "m"}]})
-    assert len(findings) == 1
-    assert findings[0]["kind"] == "vague_opis"
-
-
-@pytest.mark.unit
-def test_vague_opis_no_fire_for_long_text() -> None:
-    text = "Strojni iskop temelja u zemlji III ktg, dubina 1.5 m"
-    assert rule_vague_opis(text, {"math_rows": []}) == []
-
-
-@pytest.mark.unit
-def test_vague_opis_no_fire_for_kompleti_with_multiple_rows() -> None:
-    """Multi-row kompleti (kpl) often has a short stavka label because
-    the components carry the detail. Don't flag it as vague."""
-    meta = {
-        "math_rows": [
-            {"row": 5, "jm": "kom", "kol": 1, "cijena": 0, "position_label": "FID sklopka"},
-            {"row": 6, "jm": "kom", "kol": 1, "cijena": 0, "position_label": "Prekidač"},
-            {"row": 7, "jm": "kpl", "kol": 1, "cijena": 800, "position_label": ""},
-        ]
-    }
-    assert rule_vague_opis("Razdjelnik", meta) == []
 
 
 # ---------------------------------------------------------------------------

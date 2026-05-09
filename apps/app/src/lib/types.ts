@@ -38,6 +38,8 @@ export interface TokenPair {
 
 export type DocumentType = "troskovnik" | "don" | "zalba" | "other";
 
+export type TroskovnikType = "ponudbeni" | "procjena" | "nepoznato";
+
 export interface DocumentPublic {
   id: string;
   project_id: string;
@@ -46,6 +48,7 @@ export interface DocumentPublic {
   content_type: string;
   size_bytes: number;
   document_type: DocumentType;
+  troskovnik_type: TroskovnikType;
   created_at: string;
 }
 

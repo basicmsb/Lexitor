@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from src.models.document import DocumentType
+from src.models.document import DocumentType, TroskovnikType
 
 
 class DocumentPublic(BaseModel):
@@ -18,6 +18,7 @@ class DocumentPublic(BaseModel):
     content_type: str
     size_bytes: int
     document_type: DocumentType
+    troskovnik_type: TroskovnikType
     created_at: datetime
 
 

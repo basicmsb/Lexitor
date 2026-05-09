@@ -23,6 +23,7 @@ from src.models import (
     Citation,
     CitationSource,
     Document,
+    TroskovnikType,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,22 +75,39 @@ def _pick_status() -> AnalysisItemStatus:
     return AnalysisItemStatus.OK
 
 
-_BRANDS = (
-    # HVAC
-    "Daikin", "Mitsubishi", "Toshiba", "Fujitsu", "Carrier", "Trane",
-    "Helios", "Halton", "Systemair", "Vortice",
-    # Sanitarna / armature
-    "Geberit", "Grohe", "Hansgrohe", "Kludi", "Roca",
-    # Odvodnja / cijevi
-    "Aco", "Pipelife", "Wavin", "Rehau",
-    # Građevinski
-    "Knauf", "Sika", "Mapei", "Promat", "Ytong", "Wienerberger", "Roefix",
-    "Baumit", "Velux", "Fibran", "Ursa", "Rockwool",
-    # Elektro
-    "Hilti", "Schneider", "Siemens", "ABB", "Hager", "Legrand", "Schiedel",
-    # Premazi i alati
-    "JUB", "Caparol", "Tikkurila", "Bosch", "Hilti",
-)
+def _load_brands_from_json() -> tuple[str, ...]:
+    """Učitaj brand listu iz `data/brands.json` (kurirano ručno).
+
+    Korisnik dodaje nove brandove samo u JSON — bez code release-a.
+    Vraća tuple imena brand-ova; redoslijed je iz JSON-a (zadržava
+    semantičku grupiranost po kategorijama)."""
+    import json
+    from pathlib import Path
+    candidates = [
+        Path(__file__).resolve().parents[3] / "data" / "brands.json",
+        Path("data/brands.json"),
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                brands = data.get("brands") or []
+                names = tuple(b["name"] for b in brands if isinstance(b, dict) and b.get("name"))
+                if names:
+                    logger.info("Učitano %d brandova iz %s", len(names), path)
+                    return names
+            except Exception:
+                logger.exception("Neuspjelo čitanje brands.json — nastavljam s hardkodiranom listom")
+    # Fallback ako data/brands.json ne postoji ili je prazan
+    return (
+        "Daikin", "Mitsubishi", "Geberit", "Grohe", "Hansgrohe",
+        "Knauf", "Sika", "Mapei", "Ytong", "Baumit", "Velux",
+        "Hilti", "Schneider", "Siemens", "ABB", "Hager", "Legrand",
+        "JUB", "Caparol", "Bosch",
+    )
+
+
+_BRANDS = _load_brands_from_json()
 _BRAND_RE = re.compile(
     r"\b(" + "|".join(re.escape(b) for b in _BRANDS) + r")\b",
     re.IGNORECASE,
@@ -531,6 +549,11 @@ async def _persist_item(
     finding (legacy compat — frontend prefers the findings array)."""
     primary = findings[0] if findings else None
     aggregate = _aggregate_status(findings)
+    # Naslovne stranice (kind="tekst") nisu ni "uskladeno" ni "warn" —
+    # nisu uopće provjeravane. Forsiramo NEUTRAL da se u sidebar/tab
+    # broju ne računaju kao zelene "uskladeno" stavke.
+    if (parsed.metadata or {}).get("kind") == "tekst":
+        aggregate = AnalysisItemStatus.NEUTRAL
     item = AnalysisItem(
         analysis_id=analysis_id,
         position=parsed.position,
@@ -583,7 +606,10 @@ async def _persist_item(
     return item, citation_objs
 
 
-def _build_findings(parsed_item: ParsedItem) -> list[dict[str, Any]]:
+def _build_findings(
+    parsed_item: ParsedItem,
+    troskovnik_type: TroskovnikType | None = None,
+) -> list[dict[str, Any]]:
     """Run every deterministic rule + special-case detector on a parsed
     item and return the list of findings. Random demo mock is appended
     only when (a) the item is a free-text stavka, and (b) no real
@@ -593,6 +619,13 @@ def _build_findings(parsed_item: ParsedItem) -> list[dict[str, Any]]:
     item_kind = meta.get("kind", "stavka")
     text = parsed_item.text or ""
 
+    # Naslovne stranice (kind="tekst") su isključivo informativne —
+    # parser ih klasificira po imenu sheeta ("nasl", "naslovn",…).
+    # Nema math, nema brand-locka, nema mock random WARN-ova. Vraćamo
+    # praznu listu — analyzer će to spremiti kao OK item bez findings-a.
+    if item_kind == "tekst":
+        return findings
+
     # Per-row deterministic rules (missing JM/kol/cijena/opis, vague
     # description, zero unit price, etc.) apply ONLY to math-bearing
     # stavke. Opci_uvjeti, section headers and recap items skip these
@@ -601,7 +634,7 @@ def _build_findings(parsed_item: ParsedItem) -> list[dict[str, Any]]:
     # to opci_uvjeti (and that's the only check Marko wants there
     # until DKOM-pattern analysis comes online).
     if item_kind == "stavka":
-        findings.extend(run_per_row_rules(text, meta))
+        findings.extend(run_per_row_rules(text, meta, troskovnik_type))
 
     # Brand lock — applies to text-bearing items
     if item_kind in ("stavka", "opci_uvjeti", "raw_text"):
@@ -699,25 +732,11 @@ def _build_findings(parsed_item: ParsedItem) -> list[dict[str, Any]]:
             }
         )
 
-    # Random demo mock — only for stavke that have NO real finding.
-    # Deterministic findings always win; mock only fills the silence.
-    has_real = any(not f.get("is_mock") and f.get("status") != "ok" for f in findings)
-    if item_kind == "stavka" and not has_real:
-        status = _pick_status()
-        picked = _explanation_for(status, text)
-        if picked is not None:
-            mock_expl, mock_sugg = picked
-            findings.append(
-                {
-                    "kind": "mock",
-                    "status": status.value,
-                    "explanation": mock_expl,
-                    "suggestion": mock_sugg,
-                    "is_mock": True,
-                    "citations": [dict(_PLACEHOLDER_ZJN)] if status != AnalysisItemStatus.OK else [],
-                }
-            )
-
+    # Random demo mock je BIO ovdje — uklonjen 2026-05-09 jer je trovao
+    # labeling podatke (false positives koji nisu pravi nalazi). Ako stavka
+    # nema nijedan real finding, to znači da algoritam ništa ne prijavljuje
+    # i prikazuje se kao OK (zelena). Implicit acceptance pravilo (vidi
+    # FeedbackControls): bez korisnikova klika računa se kao Točno.
     return findings
 
 
@@ -764,9 +783,11 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             "total": total,
         }
 
+        troskovnik_type = document.troskovnik_type
+
         for index, parsed_item in enumerate(parsed.items):
             await asyncio.sleep(random.uniform(0.15, 0.45))
-            findings = _build_findings(parsed_item)
+            findings = _build_findings(parsed_item, troskovnik_type)
             highlights = _build_highlights(
                 parsed_item.text, _aggregate_status(findings)
             )

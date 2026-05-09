@@ -654,24 +654,35 @@ function OpciUvjetiDetail({
   item,
   accent,
   label,
+  kind,
 }: {
   item: AnalysisItemPublic;
   accent: string;
   label: string;
+  kind: string;
 }) {
   const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
   const row = typeof meta.row === "number" ? meta.row : null;
+  // "tekst" je naslovna stranica — informativna, NE analizira se: ne
+  // prikazujemo Lexitor analiza karticu niti gumb za dodavanje nalaza.
+  const isTekst = kind === "tekst";
+  const heading = isTekst ? "Tekst" : "Opći uvjeti";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3 items-start">
-      {/* LEFT (2/3) — opći uvjeti tekst */}
+    <div
+      className={`grid gap-4 items-start ${
+        isTekst ? "lg:grid-cols-1" : "lg:grid-cols-3"
+      }`}
+    >
       <article
-        className="rounded-lg border border-brand-border bg-white p-5 lg:col-span-2 border-l-4"
+        className={`rounded-lg border border-brand-border bg-white p-5 border-l-4 ${
+          isTekst ? "" : "lg:col-span-2"
+        }`}
         style={{ borderLeftColor: accent }}
       >
         <header className="flex items-start justify-between gap-4 mb-2">
           <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
-            Opći uvjeti
+            {heading}
           </span>
         </header>
         <div className="flex gap-3">
@@ -687,18 +698,19 @@ function OpciUvjetiDetail({
         </div>
       </article>
 
-      {/* RIGHT (1/3) — Lexitor analiza (proizvođači mogu se pojaviti i u
-          opći-uvjeti tekstovima, pa svaki red dobija svoju analizu) */}
-      <div className="lg:col-span-1 flex flex-col gap-3">
-        <FindingCard
-          accent={accent}
-          label={label}
-          explanation={item.explanation}
-          suggestion={item.suggestion}
-          citations={item.citations}
-          item={item}
-        />
-      </div>
+      {!isTekst && (
+        <div className="lg:col-span-1 flex flex-col gap-3">
+          <FindingCard
+            accent={accent}
+            label={label}
+            explanation={item.explanation}
+            suggestion={item.suggestion}
+            citations={item.citations}
+            item={item}
+          />
+          <UserAddedFindingsBlock item={item} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1098,8 +1110,8 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
       <RecapLineDetail item={item} accent={accent} label={label} kind={kind} />
     );
   }
-  if (kind === "opci_uvjeti" || kind === "raw_text") {
-    return <OpciUvjetiDetail item={item} accent={accent} label={label} />;
+  if (kind === "opci_uvjeti" || kind === "raw_text" || kind === "tekst") {
+    return <OpciUvjetiDetail item={item} accent={accent} label={label} kind={kind} />;
   }
 
   // Build per-line segments mapped to their Excel row + char offsets in
@@ -1428,36 +1440,54 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
     void persist({ include_in_pdf: val });
   };
 
+  // Implicit acceptance pravilo (2026-05-09): bez korisnikovog klika
+  // nalaz se računa kao Točno. Glavni gumb je ✗ Pogrešno (akcija). ✓ Točno
+  // se prikazuje samo kao gumb za poništavanje kad je trenutni verdict
+  // "incorrect". Komentar se pojavljuje kad korisnik klikne ✗ Pogrešno.
   const showCommentField =
-    verdict !== null || (comment && comment.length > 0);
+    verdict === "incorrect" || (comment && comment.length > 0);
 
   return (
     <div className="mt-6 pt-4 border-t border-brand-border space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <button
-          type="button"
-          onClick={() => setVerdictAndSave("correct")}
-          aria-pressed={verdict === "correct"}
-          className={`rounded-md border px-3 py-1.5 text-sm transition ${
-            verdict === "correct"
-              ? "border-[#3F7D45] bg-[#3F7D45]/10 text-[#2C5832] font-medium"
-              : "border-brand-border text-navy hover:border-ink"
-          }`}
-        >
-          ✓ Točno
-        </button>
-        <button
-          type="button"
-          onClick={() => setVerdictAndSave("incorrect")}
-          aria-pressed={verdict === "incorrect"}
-          className={`rounded-md border px-3 py-1.5 text-sm transition ${
-            verdict === "incorrect"
-              ? "border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium"
-              : "border-brand-border text-navy hover:border-ink"
-          }`}
-        >
-          ✗ Pogrešno
-        </button>
+        {verdict === "incorrect" ? (
+          <button
+            type="button"
+            onClick={() => setVerdictAndSave("incorrect")}
+            className="rounded-md border border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium px-3 py-1.5 text-sm transition"
+            title="Klikni ponovo za poništavanje"
+          >
+            ✗ Pogrešno · klikni za poništiti
+          </button>
+        ) : verdict === "correct" ? (
+          <>
+            <span className="inline-flex items-center gap-1 text-[11px] text-[#2C5832] font-medium">
+              ✓ Eksplicitno označeno kao točno
+            </span>
+            <button
+              type="button"
+              onClick={() => setVerdictAndSave("correct")}
+              className="text-[11px] text-muted hover:text-ink underline transition"
+            >
+              poništi
+            </button>
+            <button
+              type="button"
+              onClick={() => setVerdictAndSave("incorrect")}
+              className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-[#A8392B] hover:text-[#A8392B] transition ml-auto"
+            >
+              ✗ Pogrešno
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setVerdictAndSave("incorrect")}
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-[#A8392B] hover:text-[#A8392B] transition"
+          >
+            ✗ Pogrešno
+          </button>
+        )}
         <span
           className={`text-[11px] ml-auto ${
             saveState === "error" ? "text-[#A8392B]" : "text-muted"
@@ -1469,6 +1499,12 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
           {saveState === "error" && (errorMsg ?? "Greška")}
         </span>
       </div>
+
+      {!verdict && (
+        <p className="text-[11px] text-muted italic">
+          Bez tvog klika nalaz se broji kao točan.
+        </p>
+      )}
 
       {showCommentField && (
         <div>

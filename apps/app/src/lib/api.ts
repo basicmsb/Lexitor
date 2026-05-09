@@ -14,6 +14,7 @@ import type {
   SourcesResponse,
   StartAnalysisResponse,
   TokenPair,
+  TroskovnikType,
   UserAddedFindingCreate,
 } from "@/lib/types";
 
@@ -131,12 +132,31 @@ export const api = {
     return request<MeResponse>("/auth/me");
   },
 
-  async uploadDocument(file: File, type: DocumentType): Promise<DocumentPublic> {
+  async uploadDocument(
+    file: File,
+    type: DocumentType,
+    troskovnikType: TroskovnikType = "nepoznato",
+  ): Promise<DocumentPublic> {
     const form = new FormData();
     form.append("file", file);
     form.append("document_type", type);
+    form.append("troskovnik_type", troskovnikType);
     return request<DocumentPublic>("/documents", {
       method: "POST",
+      body: form,
+    });
+  },
+
+  async updateDocumentMeta(
+    documentId: string,
+    payload: { troskovnik_type?: TroskovnikType },
+  ): Promise<DocumentPublic> {
+    const form = new FormData();
+    if (payload.troskovnik_type) {
+      form.append("troskovnik_type", payload.troskovnik_type);
+    }
+    return request<DocumentPublic>(`/documents/${documentId}`, {
+      method: "PATCH",
       body: form,
     });
   },

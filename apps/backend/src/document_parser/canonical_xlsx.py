@@ -32,20 +32,28 @@ from src.document_parser.base import ParsedDocument, ParsedItem, ParserError
 # Sheet classification
 
 SKIP_SHEET_TOKENS = (
-    "naslovn",  # naslovna, naslovnica, naslovni
-    "nasl uk",  # naslovna ukratko (Arhigon abbreviation)
     "sadrz",  # sadržaj, sadrzaj
     "eksportiraj",  # Apple Numbers TOC export
     "summary",
     "export",
+    "toc",
+)
+# Naslovne stranice — pojavljuju se u UI kao informativni "tekst", ali se
+# NE analiziraju (nema math, nema brand-locka, nema DKOM provjera).
+TEKST_SHEET_TOKENS = (
+    "naslovn",  # naslovna, naslovnica, naslovni
+    "nasl uk",  # naslovna ukratko (Arhigon abbreviation)
+    "nasl",     # kratica koju koristi MILOS_Vinarija i sl.
     "title page",
     "cover",
-    "toc",
     "korice",
 )
 OPCI_UVJETI_TOKENS = (
     "opci uvj",   # opći uvjeti (proper spelling, after diacritic strip)
     "opci uvij",  # opći uvijeti (common typo)
+    "opci",       # kratica koju koristi MILOS_Vinarija i sl.
+    "uvjeti",
+    "uvijeti",
     "general cond",
 )
 REKAPITULACIJA_TOKENS = ("rekapitul", "recapitul", "summary of works")
@@ -64,6 +72,8 @@ def classify_sheet(name: str) -> str:
     norm = _normalise(name)
     if any(tok in norm for tok in SKIP_SHEET_TOKENS):
         return "skip"
+    if any(tok in norm for tok in TEKST_SHEET_TOKENS):
+        return "tekst"
     if any(tok in norm for tok in OPCI_UVJETI_TOKENS):
         return "opci_uvjeti"
     if any(tok in norm for tok in REKAPITULACIJA_TOKENS):
@@ -106,11 +116,30 @@ class ColumnMapping:
         return self.opis is not None
 
 
+_TOKEN_RE_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _token_pattern(tok: str) -> re.Pattern[str]:
+    """Word-boundary regex za header token. Cached jer se zove često.
+
+    Substring match je nesiguran: token 'opis' bi se matched u 'propisima',
+    'iznos' u 'iznositi', itd. Pravilo (column-name authority) traži da
+    naziv stupca bude pravi naziv, ne dio veće riječi."""
+    pat = _TOKEN_RE_CACHE.get(tok)
+    if pat is None:
+        pat = re.compile(rf"\b{re.escape(tok)}\b")
+        _TOKEN_RE_CACHE[tok] = pat
+    return pat
+
+
 def _match_roles(text: str) -> list[tuple[str, int]]:
     """Return every (role, score) match for `text`. Score is the matched
     token length — longer match = more specific. Lets the caller pick
     intelligently when one cell matches multiple roles ("opis stavke"
-    matches both "opis stavke" in opis and "stavka" in rb)."""
+    matches both "opis stavke" in opis and "stavka" in rb).
+
+    Token mora biti cijela riječ — substring match unutar veće riječi
+    ('opis' u 'propisima') NE računa se."""
     norm = _normalise(text)
     if not norm:
         return []
@@ -118,7 +147,7 @@ def _match_roles(text: str) -> list[tuple[str, int]]:
     for role, tokens in HEADER_TOKENS.items():
         best = 0
         for tok in tokens:
-            if tok in norm and len(tok) > best:
+            if _token_pattern(tok).search(norm) and len(tok) > best:
                 best = len(tok)
         if best > 0:
             out.append((role, best))
@@ -142,20 +171,23 @@ def _row_to_strings(row: tuple[Cell, ...]) -> list[str]:
     ]
 
 
-def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
-    """Infer column→role mapping from data rows alone, for sheets that
-    don't carry an explicit "stavka | opis | jed. mjere | …" header
-    (common in older Croatian troskovnici). Walks ~100 rows and counts
-    per-column signals: section labels, long text, short unit-like
-    strings, numeric values, formulas. Roles are then assigned to the
-    columns with the strongest signal in each category.
+def _compute_column_stats(
+    rows: list[tuple[Cell, ...]],
+    skip_first: int = 0,
+) -> tuple[dict[int, dict[str, int]], int]:
+    """Walk the data rows and count per-column signals: section labels,
+    long descriptive text, short unit-like tokens (jm), numerics, formulas.
 
-    Returns an empty mapping when the data doesn't look structured
-    enough — caller falls back to free-text parsing."""
+    Used both by `_sniff_columns` (when there is no header at all) and by
+    `find_header` (to content-infer roles like opis/rb/jm that the header
+    row didn't explicitly name). `skip_first` is how many leading rows to
+    skip — typically the header row itself."""
     if not rows:
-        return ColumnMapping()
-    sample = rows[:100]
+        return {}, 0
+    sample = rows[skip_first : skip_first + 100]
     max_cols = max((len(r) for r in sample), default=0)
+    if max_cols == 0:
+        return {}, 0
     stats: dict[int, dict[str, int]] = {
         c: {
             "section_labels": 0,
@@ -167,7 +199,11 @@ def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
         }
         for c in range(max_cols)
     }
-    short_alpha_re = re.compile(r"^[a-zA-Zčćžšđ][a-zA-Z0-9čćžšđ\s]{0,5}\.?$")
+    # Jedinice mjere u Hrvatskoj mogu biti dulje od 5 znakova: "komplet"
+    # (7), "izlazak" (7), "paušal" (6), "godina" (6). Dopuštamo do ~12
+    # znakova ukupno — bilo što duže ide u long_text (>30) ili je
+    # srednje-dugačka rečenica koja ne predstavlja jedinicu.
+    short_alpha_re = re.compile(r"^[a-zA-Zčćžšđ][a-zA-Z0-9čćžšđ\s']{0,11}\.?$")
     for row in sample:
         for col_idx, cell in enumerate(row[:max_cols]):
             if cell is None or cell.value is None or cell.value == "":
@@ -190,9 +226,29 @@ def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
                 stats[col_idx]["long_text"] += 1
             elif short_alpha_re.match(s):
                 stats[col_idx]["short_alpha"] += 1
+    return stats, max_cols
 
-    mapping = ColumnMapping()
-    used: set[int] = set()
+
+def _infer_missing_text_roles(
+    mapping: ColumnMapping,
+    stats: dict[int, dict[str, int]],
+) -> ColumnMapping:
+    """Content-inferira opis / rb / jm iz `stats` ne diraj postojeće
+    explicit-header mappings. Koristi se kad `find_header` nađe header s
+    nekoliko numerica (Količina/Jed.cijena/Ukupno) ali bez opisne tekstualne
+    role, ili u sniff fallbacku.
+
+    Pravila stupaca (vidi project_lexitor_column_rules.md):
+    - opis = stupac s najdužim tekstom (long_text ≥ 2)
+    - rb = stupac s najviše section labels (≥ 3)
+    - jm = stupac s najviše short alfa tokena (≥ 2) — NE smije biti
+      između cijena i iznos jer bi tu trebao biti "Jed. cijena"."""
+    used: set[int] = {
+        c for c in (
+            mapping.rb, mapping.opis, mapping.jm,
+            mapping.kol, mapping.cijena, mapping.iznos,
+        ) if c is not None
+    }
 
     def _pick(metric: str, threshold: int) -> int | None:
         candidates = [
@@ -203,23 +259,45 @@ def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
         best = max(candidates, key=lambda x: x[1])
         return best[0] if best[1] >= threshold else None
 
-    # rb — column with the most section-style labels (1., 1.1., A.II.3)
-    rb_col = _pick("section_labels", 3)
-    if rb_col is not None:
-        mapping.rb = rb_col
-        used.add(rb_col)
+    if mapping.opis is None:
+        opis_col = _pick("long_text", 2)
+        if opis_col is not None:
+            mapping.opis = opis_col
+            used.add(opis_col)
 
-    # opis — column with the most long descriptive text
-    opis_col = _pick("long_text", 2)
-    if opis_col is not None:
-        mapping.opis = opis_col
-        used.add(opis_col)
+    if mapping.rb is None:
+        rb_col = _pick("section_labels", 3)
+        if rb_col is not None:
+            mapping.rb = rb_col
+            used.add(rb_col)
 
-    # jm — column with the most short unit-like tokens (m, m2, m3, kpl, kom)
-    jm_col = _pick("short_alpha", 2)
-    if jm_col is not None:
-        mapping.jm = jm_col
-        used.add(jm_col)
+    if mapping.jm is None:
+        jm_col = _pick("short_alpha", 2)
+        if jm_col is not None:
+            mapping.jm = jm_col
+            used.add(jm_col)
+
+    return mapping
+
+
+def _sniff_columns(rows: list[tuple[Cell, ...]]) -> ColumnMapping:
+    """Infer column→role mapping from data rows alone, for sheets that
+    don't carry an explicit "stavka | opis | jed. mjere | …" header
+    (common in older Croatian troskovnici).
+
+    Returns an empty mapping when the data doesn't look structured
+    enough — caller falls back to free-text parsing."""
+    if not rows:
+        return ColumnMapping()
+    stats, _max_cols = _compute_column_stats(rows)
+    if not stats:
+        return ColumnMapping()
+
+    mapping = ColumnMapping()
+    mapping = _infer_missing_text_roles(mapping, stats)
+    used: set[int] = {
+        c for c in (mapping.rb, mapping.opis, mapping.jm) if c is not None
+    }
 
     # Numeric columns get assigned to kol → cijena → iznos in the order
     # they appear left-to-right (typical Croatian layout). A column that
@@ -297,7 +375,27 @@ def find_header(rows: list[tuple[Cell, ...]]) -> tuple[int, ColumnMapping] | Non
                         used_roles.add("iznos")
                         break
 
-        if len(used_roles) >= 2 and mapping.is_minimally_complete:
+        # Header je dovoljno kvalitetan ako pokriva ≥2 numerička/value
+        # role (kol/cijena/iznos) ili ima opis. To znači: ako nadjemo
+        # red s "Količina | Jedinična cijena | Ukupno" prihvaćamo ga
+        # iako tu nema "Opis" (B5 je vjerojatno dynamic ref title).
+        # Nedostajuće tekstualne role (opis/rb/jm) popunjavamo content
+        # inference iz redova ISPOD headera — column-name authority:
+        # stupac D je 'Količina' znači količina ide TAMO i nigdje
+        # drugdje, čak i ako mu sniff misli da je "kol" stupac A.
+        numeric_roles = sum(
+            1 for r in ("kol", "cijena", "iznos") if getattr(mapping, r) is not None
+        )
+        accept = mapping.is_minimally_complete or numeric_roles >= 2
+        if not accept:
+            continue
+        # Content-inferiraj opis/rb/jm samo kad nedostaju, koristeći
+        # podatke od retka idx+1 nadalje (ne uključuje sam header).
+        if mapping.opis is None or mapping.rb is None or mapping.jm is None:
+            stats, _ = _compute_column_stats(rows, skip_first=idx + 1)
+            if stats:
+                mapping = _infer_missing_text_roles(mapping, stats)
+        if mapping.is_minimally_complete:
             return idx, mapping
 
     # Token-based detection failed — sniff column roles from the data
@@ -454,11 +552,30 @@ def _num(value: Any) -> float | None:
         return None
 
 
-def _has_math(row: tuple[Cell, ...], mapping: ColumnMapping) -> bool:
-    return any(
-        _value(row, c) not in (None, "")
-        for c in (mapping.jm, mapping.kol, mapping.cijena, mapping.iznos)
-    )
+def _has_math(
+    row: tuple[Cell, ...],
+    mapping: ColumnMapping,
+    cache: dict[tuple[int, int], Any] | None = None,
+) -> bool:
+    """Math row indicators (column-name authority — vidi
+    project_lexitor_column_rules.md). JM smije biti samo jedinica
+    (string), a kol/cijena/iznos moraju biti **brojevi**. Cross-sheet
+    text formula `=nasl!A2` koja vraća "VINSKI PODRUM …" NIJE iznos
+    iako je formula — resolved value je string, ne broj."""
+    # JM: bilo koji ne-prazan string indikator je dovoljan
+    if mapping.jm is not None:
+        jm_val = _resolve(_cell(row, mapping.jm), cache)
+        if jm_val not in (None, ""):
+            return True
+    # Numerički stupci: resolved value MORA biti broj (ili numerički
+    # string poput "3,50"). Formula koja vraća tekst se ne računa.
+    for c in (mapping.kol, mapping.cijena, mapping.iznos):
+        if c is None:
+            continue
+        v = _resolve(_cell(row, c), cache)
+        if _num(v) is not None:
+            return True
+    return False
 
 
 # Markers Marko uses to introduce a list of sub-positions inside an item.
@@ -765,7 +882,7 @@ def parse_stavke_sheet(
     for offset, row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
         rb_str = _str(row, mapping.rb, cache)
         opis_str = _str(row, mapping.opis, cache)
-        has_math = _has_math(row, mapping)
+        has_math = _has_math(row, mapping, cache)
 
         is_empty = not (rb_str or opis_str or has_math)
         is_new_section = bool(rb_str and _is_section_label(rb_str))
@@ -1207,7 +1324,11 @@ def parse_stavke_sheet(
                         for r, t in block.description_lines
                     ],
                     "kind": "stavka",
-                    "rb": block.label,
+                    # Full hijerarhijski rb po _ARH konvenciji ("2.7.01."
+                    # umjesto samo "01."). UI prikazuje full path; analyzer
+                    # ga koristi za rb pairing protiv ground truth-a.
+                    "rb": _build_full_rb(section_stack, block.label),
+                    "rb_local": block.label,
                     "title": block.title,
                     "math_rows": block.math_rows,
                     "total_row": block.total_row,
@@ -1220,6 +1341,41 @@ def parse_stavke_sheet(
             )
         )
     return items
+
+
+def _build_full_rb(stack: list[dict[str, Any]], local: str) -> str:
+    """Spoji section stack + lokalnu stavku rb u **puni hijerarhijski path**.
+
+    _ARH konvencija (vidi project_lexitor_troskovnik_format.md):
+        section_header A.        ← stack push
+        section_header A.I.      ← stack push
+        section_header A.I.1.    ← stack push
+        stavka         A.I.1.1.  ← rb je full path
+
+    U originalu je rb često samo "1." (lokalni segment) jer je parent path
+    samo u section header redovima iznad. Ova funkcija to popravlja:
+        stack=["2.7."], local="01." → "2.7.01."
+        stack=["A.","I.","1."], local="1." → "A.I.1.1."
+
+    Bez prepend-a kad local već uključuje parent path (idempotentno).
+    """
+    if not stack or not local:
+        return local
+    parents = [s.get("label", "") for s in stack if s.get("label")]
+    if not parents:
+        return local
+    # Već full path? Provjeri da li local počinje s parent_path konkateniran
+    parent_path = "".join(
+        p if p.endswith(".") else p + "." for p in parents
+    )
+    if local.startswith(parent_path):
+        return local
+    # Strip trailing dot iz svakog dijela pa spoji s točkom + finalna točka
+    stripped_parents = ".".join(p.rstrip(".") for p in parents if p.rstrip("."))
+    stripped_local = local.rstrip(".")
+    if not stripped_parents or not stripped_local:
+        return local
+    return f"{stripped_parents}.{stripped_local}."
 
 
 _RECAP_GRAND_RE = re.compile(r"\bSVEUKUPN|GRAND\s*TOTAL|TOTAL\s*INC\b", re.IGNORECASE)
@@ -1676,6 +1832,10 @@ def parse_canonical_xlsx(path: Path) -> ParsedDocument:
                 sheet_items = parse_stavke_sheet(ws, ws.title, cache)
             elif kind == "rekapitulacija":
                 sheet_items = parse_rekapitulacija_sheet(ws, ws.title, cache)
+            elif kind == "tekst":
+                # Naslovna stranica — vidljivo u UI kao info, ali ne
+                # ulazi u nikakve provjere (nema brand-lock ni mock).
+                sheet_items = _raw_text_items(ws, ws.title, cache, item_kind="tekst")
             else:
                 # opci_uvjeti — free-text per row, no structured math
                 sheet_items = _raw_text_items(ws, ws.title, cache)

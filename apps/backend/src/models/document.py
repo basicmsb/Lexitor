@@ -23,6 +23,18 @@ class DocumentType(str, enum.Enum):
     OTHER = "other"
 
 
+class TroskovnikType(str, enum.Enum):
+    """Tip troškovnika određuje pravila za "Jediničnu cijenu":
+    - PONUDBENI: jed. cijena MORA biti prazna (popunjava ponuditelj)
+    - PROCJENA: jed. cijena MORA biti popunjena (projektantska procjena)
+    - NEPOZNATO: tip nije specificiran — rules ostaju oprezni (ne fire-aju
+      missing_cijena false-positive ali ne preskaču ni za stvarne procjene)"""
+
+    PONUDBENI = "ponudbeni"
+    PROCJENA = "procjena"
+    NEPOZNATO = "nepoznato"
+
+
 class Document(Base, TimestampMixin):
     __tablename__ = "documents"
 
@@ -51,6 +63,13 @@ class Document(Base, TimestampMixin):
     document_type: Mapped[DocumentType] = mapped_column(
         Enum(DocumentType, name="document_type"),
         default=DocumentType.OTHER,
+        nullable=False,
+    )
+    troskovnik_type: Mapped[TroskovnikType] = mapped_column(
+        Enum(TroskovnikType, name="troskovnik_type"),
+        default=TroskovnikType.NEPOZNATO,
+        # SA storeira enum.name (uppercase). Konzistentno s document_type.
+        server_default=TroskovnikType.NEPOZNATO.name,
         nullable=False,
     )
 

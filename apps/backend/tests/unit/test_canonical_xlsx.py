@@ -66,9 +66,10 @@ def _set_row(ws, row_idx: int, *values) -> None:
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("Naslovna", "skip"),
-        ("naslovnica", "skip"),
-        ("nasl uk", "skip"),
+        ("Naslovna", "tekst"),
+        ("naslovnica", "tekst"),
+        ("nasl uk", "tekst"),
+        ("nasl", "tekst"),
         ("Sadržaj", "skip"),
         ("Opći uvjeti", "opci_uvjeti"),
         ("0_OPĆI UVIJETI", "opci_uvjeti"),  # diacritic + "uvijeti" typo
