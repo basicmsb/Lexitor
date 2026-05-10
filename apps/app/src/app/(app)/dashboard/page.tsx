@@ -37,7 +37,7 @@ export default function DashboardPage() {
           <Link
             key={c.href}
             href={c.href}
-            className="group block rounded-lg border border-brand-border bg-surface p-6 hover:border-ink transition"
+            className="group block rounded-lg border border-brand-border bg-surface-2 p-6 hover:border-ink transition"
           >
             <div className="flex items-start justify-between">
               <h3 className="font-serif text-xl text-ink">{c.title}</h3>

@@ -62,3 +62,24 @@ body {
 ::selection {
   background-color: rgba(59, 130, 196, 0.25);
 }
+
+/* Focus stil — koristi signal boju, suptilan ring umjesto debelog
+   browser default-a. Vidljiv tek pri keyboard navigaciji
+   (focus-visible), ne pri klik. */
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Inputi i textarea — focus stil ide na border, ne outline */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-signal);
+}

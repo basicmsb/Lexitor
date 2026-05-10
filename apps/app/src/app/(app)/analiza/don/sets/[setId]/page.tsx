@@ -42,7 +42,7 @@ export default function DonSetDetailPage() {
   if (loading) return <p className="text-sm text-muted">Učitavam…</p>;
   if (error)
     return (
-      <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
+      <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2">
         {error}
       </p>
     );

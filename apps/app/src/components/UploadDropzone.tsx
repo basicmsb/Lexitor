@@ -78,7 +78,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
   return (
     <div className="space-y-3">
       {showTypeSelector && (
-        <div className="rounded-lg border border-brand-border bg-white p-4">
+        <div className="rounded-lg border border-brand-border bg-surface-2 p-4">
           <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted mb-2">
             Tip troškovnika
           </div>
@@ -134,7 +134,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
         className={`rounded-lg border-2 border-dashed p-12 text-center cursor-pointer transition ${
           dragging
             ? "border-signal bg-signal/5"
-            : "border-brand-border bg-white hover:border-navy"
+            : "border-brand-border bg-surface-2 hover:border-navy"
         } ${uploading ? "opacity-60 pointer-events-none" : ""}`}
       >
         <p className="font-medium text-ink">
@@ -162,7 +162,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
         />
       </div>
       {error && (
-        <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
+        <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2">
           {error}
         </p>
       )}

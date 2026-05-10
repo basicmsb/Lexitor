@@ -217,7 +217,7 @@ export function DonAnalysisView({
   }
   if (bootstrapError)
     return (
-      <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
+      <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2">
         {bootstrapError}
       </p>
     );
@@ -247,17 +247,17 @@ export function DonAnalysisView({
       )}
 
       {hasError && (
-        <div className="rounded-md border border-[#A8392B]/30 bg-[#A8392B]/5 px-4 py-3">
-          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-[#7C2A21] mb-1">
+        <div className="rounded-md border border-status-fail/30 bg-status-fail/5 px-4 py-3">
+          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-status-fail mb-1">
             Greška u analizi
           </div>
-          <p className="text-sm text-[#7C2A21]">
+          <p className="text-sm text-status-fail">
             {errorMessage ?? "Analiza nije uspjela. Pokreni ponovno za novi pokušaj."}
           </p>
         </div>
       )}
 
-      <div className="rounded-md border border-brand-border bg-white">
+      <div className="rounded-md border border-brand-border bg-surface-2">
         {isAnalyzing && (
           <div className="h-1 bg-surface-2 overflow-hidden rounded-t-md">
             <div
@@ -267,7 +267,7 @@ export function DonAnalysisView({
           </div>
         )}
         <div className="flex items-center gap-4 px-4 py-2 text-sm flex-wrap">
-        <span className={hasError ? "text-[#7C2A21] font-medium" : "text-ink font-medium"}>
+        <span className={hasError ? "text-status-fail font-medium" : "text-ink font-medium"}>
           {isAnalyzing
             ? `Analiza u tijeku… ${stream.progress}%`
             : hasError
@@ -276,7 +276,7 @@ export function DonAnalysisView({
         </span>
         <span>•</span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[#3F7D45] inline-block" />
+          <span className="w-2 h-2 rounded-full bg-status-ok inline-block" />
           {summary.ok} usklađenih
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -284,7 +284,7 @@ export function DonAnalysisView({
           {summary.warn} upozorenja
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[#A8392B] inline-block" />
+          <span className="w-2 h-2 rounded-full bg-status-fail inline-block" />
           {summary.fail} kršenja
         </span>
         {summary.neutral > 0 && (
@@ -334,7 +334,7 @@ export function DonAnalysisView({
                         {ch.title}
                       </span>
                       {ch.issueCount > 0 && (
-                        <span className="text-[10px] bg-[#A8392B]/10 text-[#A8392B] px-1.5 py-0.5 rounded shrink-0">
+                        <span className="text-[10px] bg-status-fail/10 text-status-fail px-1.5 py-0.5 rounded shrink-0">
                           {ch.issueCount}
                         </span>
                       )}
@@ -366,7 +366,7 @@ export function DonAnalysisView({
                   className="flex flex-col md:flex-row gap-4 md:items-stretch"
                 >
                   <article
-                    className="md:flex-[2] rounded-lg border border-brand-border bg-white p-5 border-l-4"
+                    className="md:flex-[2] rounded-lg border border-brand-border bg-surface-2 p-5 border-l-4"
                     style={{ borderLeftColor: accent }}
                   >
                     <header className="flex items-baseline gap-3 mb-2">
@@ -397,8 +397,8 @@ export function DonAnalysisView({
 function BlockFindings({ findings }: { findings: FindingPublic[] }) {
   if (findings.length === 0) {
     return (
-      <div className="rounded-lg border border-brand-border bg-white p-4 border-l-4 border-l-[#3F7D45] h-full">
-        <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-[#3F7D45]">
+      <div className="rounded-lg border border-brand-border bg-surface-2 p-4 border-l-4 border-l-status-ok h-full">
+        <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-status-ok">
           USKLAĐENO
         </div>
         <p className="text-xs text-muted mt-2">
@@ -412,7 +412,7 @@ function BlockFindings({ findings }: { findings: FindingPublic[] }) {
       {findings.map((f, idx) => (
         <article
           key={idx}
-          className="rounded-lg border border-brand-border bg-white p-4 border-l-4"
+          className="rounded-lg border border-brand-border bg-surface-2 p-4 border-l-4"
           style={{ borderLeftColor: STATUS_COLORS[f.status] || "#D5D2C7" }}
         >
           <header className="flex items-start justify-between gap-2 mb-3">

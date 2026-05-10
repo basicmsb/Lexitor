@@ -6,7 +6,7 @@ export default function ZalbePage() {
         Generiranje nacrta žalbi i odgovora — <em>Faza 2 (Q4 2026)</em>.
       </p>
       <div className="mt-8 rounded-lg border border-gold/30 bg-gold/10 p-8">
-        <p className="text-[#7A5D22]">
+        <p className="text-gold">
           Coming soon. Modul je planiran za Fazu 2 razvoja.
         </p>
       </div>

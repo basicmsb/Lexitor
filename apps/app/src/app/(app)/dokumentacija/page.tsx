@@ -49,7 +49,7 @@ export default function DokumentacijaPage() {
       </div>
 
       {error && (
-        <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2 mb-4">
+        <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2 mb-4">
           {error}
         </p>
       )}
@@ -90,7 +90,7 @@ function SectionZjn({ items }: { items: IndexedSource[] }) {
       </p>
 
       {items.length > 0 && (
-        <div className="rounded-lg border border-brand-border bg-white">
+        <div className="rounded-lg border border-brand-border bg-surface-2">
           <ul className="divide-y divide-brand-border max-h-[400px] overflow-y-auto">
             {items.map((s) => (
               <li key={s.klasa} className="px-4 py-2.5 flex items-center justify-between gap-4">
@@ -142,7 +142,7 @@ function SectionDkom({ items }: { items: IndexedSource[] }) {
       </p>
 
       {items.length > 0 && (
-        <div className="rounded-lg border border-brand-border bg-white">
+        <div className="rounded-lg border border-brand-border bg-surface-2">
           <ul className="divide-y divide-brand-border">
             {items.map((s) => (
               <li key={s.klasa} className="px-4 py-3">
@@ -180,7 +180,7 @@ function SectionRoadmap() {
   return (
     <section>
       <h2 className="font-serif text-xl text-ink mb-3">Planirani izvori</h2>
-      <ul className="rounded-lg border border-brand-border bg-white divide-y divide-brand-border">
+      <ul className="rounded-lg border border-brand-border bg-surface-2 divide-y divide-brand-border">
         <RoadmapItem name="Pravilnici i uredbe Vlade RH" status="Faza 1A" />
         <RoadmapItem name="VUS presude (Visoki upravni sud)" status="Faza 1B" />
         <RoadmapItem name="Sud Europske unije — odabrane presude" status="Faza 2" />

@@ -37,7 +37,7 @@ export default function LoginPage() {
 
         <form
           onSubmit={onSubmit}
-          className="bg-white border border-brand-border rounded-lg p-8 space-y-5"
+          className="bg-surface-2 border border-brand-border rounded-lg p-8 space-y-5"
         >
           <Field label="Email" htmlFor="email">
             <input
@@ -64,7 +64,7 @@ export default function LoginPage() {
           </Field>
 
           {error && (
-            <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
+            <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2">
               {error}
             </p>
           )}
@@ -90,7 +90,7 @@ export default function LoginPage() {
 }
 
 const inputClass =
-  "mt-1 block w-full rounded-md border border-brand-border bg-white shadow-sm focus:border-signal focus:ring-2 focus:ring-signal/20 px-3 py-2 outline-none transition";
+  "mt-1 block w-full rounded-md border border-brand-border bg-surface-2 shadow-sm focus:border-signal focus:ring-2 focus:ring-signal/20 px-3 py-2 outline-none transition";
 
 function Field({
   label,

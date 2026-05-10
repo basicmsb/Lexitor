@@ -161,7 +161,7 @@ export function AnalysisResults({ status, progress, items: rawItems, summary, er
       )}
 
       <div className="flex flex-1 gap-4 min-h-0">
-        <aside className="w-72 shrink-0 rounded-lg border border-brand-border bg-white overflow-y-auto">
+        <aside className="w-72 shrink-0 rounded-lg border border-brand-border bg-surface-2 overflow-y-auto">
           {filteredItems.length === 0 ? (
             <p className="p-4 text-sm text-muted italic">
               {status === "running" ? "Čekam prve rezultate…" : "Nema stavki."}
@@ -370,7 +370,7 @@ function SheetTabs({
       )}
 
       {/* Always-visible dropdown menu of all sheets */}
-      <div className="relative flex items-stretch border-l border-brand-border shrink-0 bg-white">
+      <div className="relative flex items-stretch border-l border-brand-border shrink-0 bg-surface-2">
         <button
           type="button"
           onClick={() => setMenuOpen((o) => !o)}
@@ -392,7 +392,7 @@ function SheetTabs({
         {menuOpen && (
           <div
             role="menu"
-            className="absolute right-0 top-full z-30 mt-1 w-72 max-h-96 overflow-y-auto rounded-md border border-brand-border bg-white shadow-lg py-1"
+            className="absolute right-0 top-full z-30 mt-1 w-72 max-h-96 overflow-y-auto rounded-md border border-brand-border bg-surface-2 shadow-lg py-1"
           >
             {sheetNames.map((name) => {
               const isActive = name === activeSheet;
@@ -438,7 +438,7 @@ function Header({
 }) {
   if (status === "error") {
     return (
-      <div className="rounded-lg border border-[#A8392B]/30 bg-[#A8392B]/10 p-4 text-sm text-[#7C2A21]">
+      <div className="rounded-lg border border-status-fail/30 bg-status-fail/10 p-4 text-sm text-status-fail">
         Greška u analizi: {error ?? "nepoznat razlog."}
       </div>
     );
@@ -446,7 +446,7 @@ function Header({
 
   if (status === "complete" && summary) {
     return (
-      <div className="rounded-lg border border-brand-border bg-white px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+      <div className="rounded-lg border border-brand-border bg-surface-2 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
         <span className="font-medium text-ink">Analiza završena</span>
         <Pill color="#3F7D45" label={`${summary.ok} usklađenih`} />
         <Pill color="#A87F2E" label={`${summary.warn} upozorenja`} />
@@ -457,7 +457,7 @@ function Header({
   }
 
   return (
-    <div className="rounded-lg border border-brand-border bg-white px-4 py-3">
+    <div className="rounded-lg border border-brand-border bg-surface-2 px-4 py-3">
       <div className="flex items-center justify-between text-sm mb-2">
         <span className="font-medium text-ink">
           {status === "running" ? "Analiza u tijeku…" : "Priprema analize…"}
@@ -589,7 +589,7 @@ function ProvjeraCell({
   ) {
     return (
       <span
-        className="text-[#A8392B] text-xs font-medium"
+        className="text-status-fail text-xs font-medium"
         title={`Excel: ${formatCurrency(excel)} · Lexitor: ${formatCurrency(computed)}`}
       >
         ✗ {formatCurrency(computed)}
@@ -605,7 +605,7 @@ function ProvjeraCell({
     const offending = excel !== null && hasMoreThanTwoDecimals(excel) ? excel : computed;
     return (
       <span
-        className="text-[#A8392B] text-xs font-medium"
+        className="text-status-fail text-xs font-medium"
         title={`Iznos sadrži više od 2 decimale: ${offending} — moguća računska greška jer cijena u EUR ima 2 decimale.`}
       >
         ✗ ra. greška
@@ -614,7 +614,7 @@ function ProvjeraCell({
   }
 
   if (isFormula) {
-    return <span className="text-[#3F7D45] text-xs">✓ formula</span>;
+    return <span className="text-status-ok text-xs">✓ formula</span>;
   }
   if (computed === null) {
     return <span className="text-muted text-xs">—</span>;
@@ -629,7 +629,7 @@ function ProvjeraCell({
       </span>
     );
   }
-  return <span className="text-[#3F7D45] text-xs">✓ točno</span>;
+  return <span className="text-status-ok text-xs">✓ točno</span>;
 }
 
 /** Append a browser text-fragment (#:~:text=…) to a citation URL so that
@@ -708,7 +708,7 @@ function OpciUvjetiDetail({
       }`}
     >
       <article
-        className={`rounded-lg border border-brand-border bg-white p-5 border-l-4 ${
+        className={`rounded-lg border border-brand-border bg-surface-2 p-5 border-l-4 ${
           isTekst ? "" : "lg:col-span-2"
         }`}
         style={{ borderLeftColor: accent }}
@@ -823,11 +823,11 @@ function RecapLineDetail({
 
   function refStyle(status?: string): string {
     if (status === "fail")
-      return "bg-[#A8392B]/10 text-[#A8392B] border border-[#A8392B]/30";
+      return "bg-status-fail/10 text-status-fail border border-status-fail/30";
     if (status === "warn")
       return "bg-[#A87F2E]/10 text-[#A87F2E] border border-[#A87F2E]/30";
     if (status === "ok")
-      return "bg-[#3F7D45]/10 text-[#3F7D45] border border-[#3F7D45]/30";
+      return "bg-status-ok/10 text-status-ok border border-status-ok/30";
     return "bg-signal/10 text-signal";
   }
 
@@ -841,7 +841,7 @@ function RecapLineDetail({
   return (
     <div className="grid gap-4 lg:grid-cols-3 items-start">
       <article
-        className="rounded-lg border border-brand-border bg-white p-6 lg:col-span-2 border-l-4"
+        className="rounded-lg border border-brand-border bg-surface-2 p-6 lg:col-span-2 border-l-4"
         style={{ borderLeftColor: accent }}
       >
         <header className="flex items-start justify-between gap-4 mb-3">
@@ -962,7 +962,7 @@ function GroupSumDetail({
   return (
     <div className="grid gap-4 lg:grid-cols-3 items-start">
       <article
-        className="rounded-lg border border-brand-border bg-white p-6 lg:col-span-2 border-l-4"
+        className="rounded-lg border border-brand-border bg-surface-2 p-6 lg:col-span-2 border-l-4"
         style={{ borderLeftColor: accent }}
       >
         <header className="flex items-start justify-between gap-4 mb-3">
@@ -1029,7 +1029,7 @@ function GroupSumDetail({
                       </td>
                       <td className="py-1.5 text-right">
                         {included ? (
-                          <span className="text-[#3F7D45] text-xs">✓</span>
+                          <span className="text-status-ok text-xs">✓</span>
                         ) : (
                           <span className="text-muted text-xs">·</span>
                         )}
@@ -1042,7 +1042,7 @@ function GroupSumDetail({
                   return (
                     <tr
                       key={`miss-${idx}`}
-                      className="border-t border-brand-border bg-[#A8392B]/5"
+                      className="border-t border-brand-border bg-status-fail/5"
                     >
                       <td
                         style={{ width: "2rem" }}
@@ -1060,7 +1060,7 @@ function GroupSumDetail({
                       </td>
                       <td className="py-1.5 text-right">
                         <span
-                          className="text-[#A8392B] text-xs font-medium"
+                          className="text-status-fail text-xs font-medium"
                           title="Stavka u rasponu, ali nije pokrivena ovom SUM formulom"
                         >
                           ✗ izostavljeno
@@ -1231,7 +1231,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     <div className="grid gap-4 lg:grid-cols-3 items-start">
       {/* LEFT (2/3) — STAVKA: contents from the troskovnik itself */}
       <article
-        className="rounded-lg border border-brand-border bg-white p-6 lg:col-span-2 border-l-4"
+        className="rounded-lg border border-brand-border bg-surface-2 p-6 lg:col-span-2 border-l-4"
         style={{ borderLeftColor: accent }}
       >
         {path.length > 0 && (
@@ -1487,7 +1487,7 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
           <button
             type="button"
             onClick={() => setVerdictAndSave("incorrect")}
-            className="rounded-md border border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium px-3 py-1.5 text-sm transition"
+            className="rounded-md border border-status-fail bg-status-fail/10 text-status-fail font-medium px-3 py-1.5 text-sm transition"
             title="Klikni ponovo za poništavanje"
           >
             ✗ Pogrešno · klikni za poništiti
@@ -1507,7 +1507,7 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
             <button
               type="button"
               onClick={() => setVerdictAndSave("incorrect")}
-              className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-[#A8392B] hover:text-[#A8392B] transition ml-auto"
+              className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-status-fail hover:text-status-fail transition ml-auto"
             >
               ✗ Pogrešno
             </button>
@@ -1516,14 +1516,14 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
           <button
             type="button"
             onClick={() => setVerdictAndSave("incorrect")}
-            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-[#A8392B] hover:text-[#A8392B] transition"
+            className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-navy hover:border-status-fail hover:text-status-fail transition"
           >
             ✗ Pogrešno
           </button>
         )}
         <span
           className={`text-[11px] ml-auto ${
-            saveState === "error" ? "text-[#A8392B]" : "text-muted"
+            saveState === "error" ? "text-status-fail" : "text-muted"
           }`}
           aria-live="polite"
         >
@@ -1544,7 +1544,7 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
           <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
             Komentar
             {verdict === "incorrect" && (
-              <span className="ml-1 text-[#A8392B] normal-case">obavezno</span>
+              <span className="ml-1 text-status-fail normal-case">obavezno</span>
             )}
           </label>
           <textarea
@@ -1556,7 +1556,7 @@ function FeedbackControls({ item }: { item: AnalysisItemPublic }) {
                 ? "Zašto je nalaz pogrešan?"
                 : "Opcionalno objašnjenje…"
             }
-            className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
+            className="w-full rounded-md border border-brand-border bg-surface-2 px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
           />
         </div>
       )}
@@ -1604,7 +1604,7 @@ function FindingCard({
 
   return (
     <article
-      className="rounded-lg border border-brand-border bg-white p-6 border-l-4"
+      className="rounded-lg border border-brand-border bg-surface-2 p-6 border-l-4"
       style={{ borderLeftColor: accent }}
     >
       <header className="flex items-start justify-between gap-4 mb-4">
@@ -1822,10 +1822,10 @@ function KindOverrideDropdown({
         <span className="text-[10px] text-[#2C5832] normal-case">Spremljeno ✓</span>
       )}
       {saveState === "error" && (
-        <span className="text-[10px] text-[#A8392B] normal-case">Greška</span>
+        <span className="text-[10px] text-status-fail normal-case">Greška</span>
       )}
       {open && (
-        <div className="absolute top-full left-0 z-20 mt-1 min-w-[220px] rounded-md border border-brand-border bg-white shadow-lg">
+        <div className="absolute top-full left-0 z-20 mt-1 min-w-[220px] rounded-md border border-brand-border bg-surface-2 shadow-lg">
           <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-muted border-b border-brand-border">
             Auto: {kindOptionLabel(autoKind)}
           </div>
@@ -1969,7 +1969,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
         return (
           <article
             key={f.id}
-            className="rounded-lg border border-dashed bg-white p-5 border-l-4"
+            className="rounded-lg border border-dashed bg-surface-2 p-5 border-l-4"
             style={{ borderLeftColor: accent, borderColor: accent + "55" }}
           >
             <header className="flex items-start justify-between gap-3 mb-3">
@@ -1999,7 +1999,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
             <button
               type="button"
               onClick={() => onDelete(f.id)}
-              className="mt-3 text-[11px] text-muted hover:text-[#A8392B] transition"
+              className="mt-3 text-[11px] text-muted hover:text-status-fail transition"
             >
               ✗ Ukloni nalaz
             </button>
@@ -2008,7 +2008,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
       })}
 
       {showForm ? (
-        <div className="rounded-lg border border-dashed border-brand-border bg-white p-5 space-y-3">
+        <div className="rounded-lg border border-dashed border-brand-border bg-surface-2 p-5 space-y-3">
           <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
             Novi nalaz koji je LA propustio
           </div>
@@ -2020,7 +2020,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
             <select
               value={kind}
               onChange={(e) => setKind(e.target.value)}
-              className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy focus:outline-none focus:border-ink"
+              className="w-full rounded-md border border-brand-border bg-surface-2 px-2 py-1.5 text-sm text-navy focus:outline-none focus:border-ink"
             >
               {USER_FINDING_KINDS.map((k) => (
                 <option key={k.value} value={k.value}>
@@ -2041,7 +2041,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
                 aria-pressed={statusValue === "warn"}
                 className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition ${
                   statusValue === "warn"
-                    ? "border-[#B8893E] bg-[#B8893E]/10 text-[#7A5A28] font-medium"
+                    ? "border-[#B8893E] bg-gold/10 text-[#7A5A28] font-medium"
                     : "border-brand-border text-navy hover:border-ink"
                 }`}
               >
@@ -2053,7 +2053,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
                 aria-pressed={statusValue === "fail"}
                 className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition ${
                   statusValue === "fail"
-                    ? "border-[#A8392B] bg-[#A8392B]/10 text-[#7C2A21] font-medium"
+                    ? "border-status-fail bg-status-fail/10 text-status-fail font-medium"
                     : "border-brand-border text-navy hover:border-ink"
                 }`}
               >
@@ -2064,19 +2064,19 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
 
           <div>
             <label className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">
-              Komentar <span className="text-[#A8392B] normal-case">obavezno</span>
+              Komentar <span className="text-status-fail normal-case">obavezno</span>
             </label>
             <textarea
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               rows={3}
               placeholder="Što je LA trebao prijaviti i zašto?"
-              className="w-full rounded-md border border-brand-border bg-white px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
+              className="w-full rounded-md border border-brand-border bg-surface-2 px-2 py-1.5 text-sm text-navy placeholder:text-muted focus:outline-none focus:border-ink resize-y"
             />
           </div>
 
           {error && (
-            <p className="text-[11px] text-[#A8392B]">{error}</p>
+            <p className="text-[11px] text-status-fail">{error}</p>
           )}
 
           <div className="flex items-center gap-2">
@@ -2084,7 +2084,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
               type="button"
               onClick={onSubmit}
               disabled={saving}
-              className="rounded-md bg-ink px-3 py-1.5 text-sm text-white hover:bg-navy transition disabled:opacity-50"
+              className="rounded-md bg-ink px-3 py-1.5 text-sm text-surface hover:bg-navy transition disabled:opacity-50"
             >
               {saving ? "Spremam…" : "Spremi nalaz"}
             </button>
@@ -2102,7 +2102,7 @@ function UserAddedFindingsBlock({ item }: { item: AnalysisItemPublic }) {
         <button
           type="button"
           onClick={() => setShowForm(true)}
-          className="rounded-lg border border-dashed border-brand-border bg-white/60 px-4 py-3 text-sm text-muted hover:text-ink hover:border-ink transition"
+          className="rounded-lg border border-dashed border-brand-border bg-surface-2/60 px-4 py-3 text-sm text-muted hover:text-ink hover:border-ink transition"
         >
           + Dodaj nalaz koji je LA propustio
         </button>

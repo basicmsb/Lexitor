@@ -50,7 +50,7 @@ export default function AnalizaTroskovnikPage() {
       <div className="mt-10">
         <h2 className="text-lg font-semibold text-ink mb-3">Nedavno učitano</h2>
         {error && (
-          <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2 mb-3">
+          <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2 mb-3">
             {error}
           </p>
         )}

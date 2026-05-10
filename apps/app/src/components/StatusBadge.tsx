@@ -7,7 +7,7 @@ const STYLES: Record<
   ok: {
     label: "Usklađeno",
     description: "Sustav nije našao problem.",
-    bgClass: "bg-[#3F7D45]/10 border-[#3F7D45]/30",
+    bgClass: "bg-status-ok/10 border-status-ok/30",
     textClass: "text-[#2C5832]",
     dotHex: "#3F7D45",
   },
@@ -15,14 +15,14 @@ const STYLES: Record<
     label: "Upozorenje",
     description: "Mogući problem, vrijedi pregled.",
     bgClass: "bg-[#A87F2E]/10 border-[#A87F2E]/30",
-    textClass: "text-[#7A5D22]",
+    textClass: "text-gold",
     dotHex: "#A87F2E",
   },
   fail: {
     label: "Kršenje",
     description: "Visoka vjerojatnost kršenja ZJN-a.",
-    bgClass: "bg-[#A8392B]/10 border-[#A8392B]/30",
-    textClass: "text-[#7C2A21]",
+    bgClass: "bg-status-fail/10 border-status-fail/30",
+    textClass: "text-status-fail",
     dotHex: "#A8392B",
   },
   uncertain: {

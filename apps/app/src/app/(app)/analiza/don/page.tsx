@@ -88,7 +88,7 @@ export default function AnalizaDonPage() {
       <div className="mt-10">
         <h2 className="text-lg font-semibold text-ink mb-3">Nedavno učitano</h2>
         {error && (
-          <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2 mb-3">
+          <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2 mb-3">
             {error}
           </p>
         )}
@@ -101,7 +101,7 @@ export default function AnalizaDonPage() {
               return (
                 <article
                   key={s.id}
-                  className="rounded-lg border border-brand-border bg-white"
+                  className="rounded-lg border border-brand-border bg-surface-2"
                 >
                   <header className="flex items-center gap-3 px-4 py-3">
                     <button
@@ -129,7 +129,7 @@ export default function AnalizaDonPage() {
                     <button
                       type="button"
                       onClick={() => void onDeleteSet(s.id)}
-                      className="text-[11px] text-muted hover:text-[#A8392B] transition shrink-0 px-2"
+                      className="text-[11px] text-muted hover:text-status-fail transition shrink-0 px-2"
                       title="Obriši nabavu"
                     >
                       ✗

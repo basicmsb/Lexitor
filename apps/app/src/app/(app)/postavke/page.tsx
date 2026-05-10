@@ -84,7 +84,7 @@ export default function PostavkePage() {
   if (loading) return <p className="text-sm text-muted">Učitavam…</p>;
   if (err && !project)
     return (
-      <div className="rounded-lg border border-[#A8392B]/30 bg-[#A8392B]/10 p-4 text-sm text-[#7C2A21]">
+      <div className="rounded-lg border border-status-fail/30 bg-status-fail/10 p-4 text-sm text-status-fail">
         {err}
       </div>
     );
@@ -96,7 +96,7 @@ export default function PostavkePage() {
         <p className="text-sm text-muted">Tvrtka i logo za PDF izvještaje.</p>
       </div>
 
-      <section className="rounded-lg border border-brand-border bg-white p-6">
+      <section className="rounded-lg border border-brand-border bg-surface-2 p-6">
         <h2 className="font-display text-lg text-ink mb-1">Tvrtka</h2>
         <p className="text-sm text-muted mb-4">
           {project?.name ?? "—"}
@@ -143,7 +143,7 @@ export default function PostavkePage() {
               type="button"
               disabled={busy}
               onClick={() => fileInputRef.current?.click()}
-              className="rounded-md border border-brand-border bg-white px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
+              className="rounded-md border border-brand-border bg-surface-2 px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
             >
               {project?.has_logo ? "Zamijeni logo" : "Postavi logo"}
             </button>
@@ -152,7 +152,7 @@ export default function PostavkePage() {
                 type="button"
                 disabled={busy}
                 onClick={onDelete}
-                className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-[#A8392B] hover:border-[#A8392B] transition disabled:opacity-50"
+                className="rounded-md border border-brand-border px-3 py-1.5 text-sm text-status-fail hover:border-status-fail transition disabled:opacity-50"
               >
                 Obriši logo
               </button>
@@ -161,13 +161,13 @@ export default function PostavkePage() {
         </div>
 
         {err && (
-          <p className="mt-3 text-sm text-[#A8392B]" aria-live="polite">
+          <p className="mt-3 text-sm text-status-fail" aria-live="polite">
             {err}
           </p>
         )}
       </section>
 
-      <section className="rounded-lg border border-brand-border bg-white p-6">
+      <section className="rounded-lg border border-brand-border bg-surface-2 p-6">
         <h2 className="font-display text-lg text-ink mb-1">Označeni primjeri</h2>
         <p className="text-sm text-muted mb-4">
           Izvoz svih stavki na kojima si označio nalaze (✓ Točno / ✗ Pogrešno)
@@ -179,13 +179,13 @@ export default function PostavkePage() {
           type="button"
           disabled={exportBusy}
           onClick={onExportLabels}
-          className="rounded-md border border-brand-border bg-white px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
+          className="rounded-md border border-brand-border bg-surface-2 px-3 py-1.5 text-sm text-navy hover:border-ink transition disabled:opacity-50"
         >
           {exportBusy ? "Pripremam…" : "Preuzmi JSON"}
         </button>
 
         {exportErr && (
-          <p className="mt-3 text-sm text-[#A8392B]" aria-live="polite">
+          <p className="mt-3 text-sm text-status-fail" aria-live="polite">
             {exportErr}
           </p>
         )}

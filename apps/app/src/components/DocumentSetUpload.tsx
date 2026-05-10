@@ -89,7 +89,7 @@ export function DocumentSetUpload({ onCreated }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-brand-border bg-white p-5 space-y-4">
+      <div className="rounded-lg border border-brand-border bg-surface-2 p-5 space-y-4">
         <div>
           <label className="block text-[11px] uppercase tracking-[0.18em] font-semibold text-muted mb-1">
             Naziv nabave
@@ -100,7 +100,7 @@ export function DocumentSetUpload({ onCreated }: Props) {
             onChange={(e) => setName(e.target.value)}
             disabled={uploading}
             placeholder="npr. JN-25/2026 — Nabava urbane opreme Krupa i Crnopac"
-            className="w-full rounded-md border border-brand-border bg-white px-3 py-2 text-sm text-navy placeholder:text-muted/70 focus:outline-none focus:border-ink"
+            className="w-full rounded-md border border-brand-border bg-surface-2 px-3 py-2 text-sm text-navy placeholder:text-muted/70 focus:outline-none focus:border-ink"
           />
           <p className="text-[11px] text-muted mt-1">
             Slobodan tekst — može sadržavati evidencijski broj (formati variraju
@@ -163,7 +163,7 @@ export function DocumentSetUpload({ onCreated }: Props) {
                     type="button"
                     onClick={() => removeFile(idx)}
                     disabled={uploading}
-                    className="text-[11px] text-muted hover:text-[#A8392B] transition"
+                    className="text-[11px] text-muted hover:text-status-fail transition"
                   >
                     ✗
                   </button>
@@ -178,12 +178,12 @@ export function DocumentSetUpload({ onCreated }: Props) {
             type="button"
             onClick={onSubmit}
             disabled={uploading || files.length === 0 || !name.trim()}
-            className="rounded-md bg-ink px-4 py-2 text-sm text-white hover:bg-navy transition disabled:opacity-50"
+            className="rounded-md bg-ink px-4 py-2 text-sm text-surface hover:bg-navy transition disabled:opacity-50"
           >
             {uploading ? "Učitavam…" : `Učitaj nabavu (${files.length})`}
           </button>
           {error && (
-            <p className="text-sm text-[#A8392B]">{error}</p>
+            <p className="text-sm text-status-fail">{error}</p>
           )}
         </div>
       </div>

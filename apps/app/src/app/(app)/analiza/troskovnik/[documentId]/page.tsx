@@ -109,7 +109,7 @@ export default function TroskovnikDetailPage() {
 
   if (bootstrapError) {
     return (
-      <div className="rounded-lg border border-[#A8392B]/30 bg-[#A8392B]/10 p-4 text-sm text-[#7C2A21]">
+      <div className="rounded-lg border border-status-fail/30 bg-status-fail/10 p-4 text-sm text-status-fail">
         {bootstrapError}
       </div>
     );
@@ -139,7 +139,7 @@ export default function TroskovnikDetailPage() {
                 onChange={(e) =>
                   void changeTroskovnikType(e.target.value as TroskovnikType)
                 }
-                className="rounded-md border border-brand-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:border-ink"
+                className="rounded-md border border-brand-border bg-surface-2 px-2 py-1 text-sm text-navy focus:outline-none focus:border-ink"
                 title="Promjena tipa pokreće novu analizu"
               >
                 <option value="ponudbeni">Ponudbeni (prazna jed. cijena)</option>

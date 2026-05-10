@@ -62,11 +62,11 @@ export function DocumentList({
   return (
     <div className="space-y-2">
       {error && (
-        <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2">
+        <p className="text-sm bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md px-3 py-2">
           {error}
         </p>
       )}
-      <ul className="divide-y divide-brand-border rounded-lg border border-brand-border bg-white">
+      <ul className="divide-y divide-brand-border rounded-lg border border-brand-border bg-surface-2">
         {documents.map((doc) => {
           const href = `/analiza/${doc.document_type === "don" ? "don" : "troskovnik"}/${doc.id}`;
           const isBusy = busyId === doc.id;
@@ -94,7 +94,7 @@ export function DocumentList({
                 disabled={isBusy}
                 aria-label={`Obriši ${doc.filename}`}
                 title="Obriši dokument"
-                className="shrink-0 rounded-md p-2 text-muted hover:text-[#A8392B] hover:bg-[#A8392B]/10 transition disabled:opacity-50"
+                className="shrink-0 rounded-md p-2 text-muted hover:text-status-fail hover:bg-status-fail/10 transition disabled:opacity-50"
               >
                 {isBusy ? (
                   <span className="text-xs">…</span>
