@@ -49,6 +49,21 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://lexitor.eu"),
 };
 
+/**
+ * FOUC prevention: prije CSS-a postavi `html.dark` ako user odabrao
+ * dark mode ili "system" s OS u dark.
+ */
+const themeInitScript = `
+(function() {
+  try {
+    var stored = localStorage.getItem('lexitor-theme');
+    var theme = stored || 'system';
+    var dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.documentElement.classList.add('dark');
+  } catch (e) {}
+})();
+`.trim();
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -56,7 +71,11 @@ export default function RootLayout({
     <html
       lang="hr"
       className={`${sans.variable} ${serif.variable} ${display.variable} ${accent.variable} ${mono.variable}`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="font-sans antialiased">{children}</body>
     </html>
   );

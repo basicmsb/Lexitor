@@ -11,12 +11,34 @@
   --color-signal: #3B82C4;
   --color-gold: #B8893E;
   --color-border: #E0E0DA;
+  --color-status-ok: #3F7D45;
+  --color-status-warn: #A87F2E;
+  --color-status-fail: #A8392B;
+  --color-overlay-soft: rgba(11, 19, 32, 0.05);
+  --color-overlay-medium: rgba(11, 19, 32, 0.1);
+}
+
+.dark {
+  --color-surface: #0B1320;
+  --color-surface-2: #1A2332;
+  --color-ink: #F7F5F0;
+  --color-navy: #FAFAF8;
+  --color-muted: #9B9892;
+  --color-signal: #3B82C4;
+  --color-gold: #B8893E;
+  --color-border: rgba(247, 245, 240, 0.15);
+  --color-status-ok: #5A9C5F;
+  --color-status-warn: #C99E4D;
+  --color-status-fail: #C95548;
+  --color-overlay-soft: rgba(247, 245, 240, 0.05);
+  --color-overlay-medium: rgba(247, 245, 240, 0.1);
 }
 
 html,
 body {
   background-color: var(--color-surface);
   color: var(--color-ink);
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
 body {
@@ -25,5 +47,15 @@ body {
 }
 
 ::selection {
-  background-color: rgba(59, 130, 196, 0.2);
+  background-color: rgba(59, 130, 196, 0.25);
+}
+
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
