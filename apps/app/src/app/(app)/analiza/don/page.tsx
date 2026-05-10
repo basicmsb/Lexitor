@@ -1,12 +1,65 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import { DocumentList } from "@/components/DocumentList";
+import { UploadDropzone } from "@/components/UploadDropzone";
+import { api } from "@/lib/api";
+import type { DocumentPublic } from "@/lib/types";
+
 export default function AnalizaDonPage() {
+  const [documents, setDocuments] = useState<DocumentPublic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await api.listDocuments();
+      setDocuments(list.items.filter((d) => d.document_type === "don"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Greška pri dohvatu.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const onUploaded = (doc: DocumentPublic) => {
+    setDocuments((prev) => [doc, ...prev]);
+  };
+
+  const onDeleted = (id: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  };
+
   return (
     <div className="max-w-4xl">
-      <h1 className="font-display text-3xl text-ink mb-2">Analiza DON-a</h1>
-      <p className="text-muted">
-        Provjera dokumentacije o nabavi protiv ZJN-a i prakse DKOM-a.
-      </p>
-      <div className="mt-8 rounded-lg bg-white border border-brand-border p-8">
-        <p className="text-muted">Placeholder — implementacija u Sprintu 2.</p>
+      <div className="mb-8">
+        <h1 className="font-display text-3xl text-ink mb-2">Analiza DON-a</h1>
+        <p className="text-muted">
+          Učitaj dokumentaciju o nabavi (PDF ili Word) — Lexitor analizira
+          klauzule protiv ZJN-a, pravilnika i DKOM presedana.
+        </p>
+      </div>
+
+      <UploadDropzone documentType="don" onUploaded={onUploaded} />
+
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-ink mb-3">Nedavno učitano</h2>
+        {error && (
+          <p className="text-sm bg-[#A8392B]/10 border border-[#A8392B]/30 text-[#7C2A21] rounded-md px-3 py-2 mb-3">
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="text-sm text-muted">Učitavam…</p>
+        ) : (
+          <DocumentList documents={documents} onDeleted={onDeleted} />
+        )}
       </div>
     </div>
   );

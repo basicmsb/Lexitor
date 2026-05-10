@@ -5,7 +5,16 @@ import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from 
 import { api } from "@/lib/api";
 import type { DocumentPublic, DocumentType, TroskovnikType } from "@/lib/types";
 
-const ACCEPT = ".pdf,.xlsx,.arhigonfile";
+// Različiti accept tipovi po vrsti dokumenta. Troškovnik: XLSX struktura
+// + .arhigonfile XML BoQ. DON: EOJN sad servira Markdown (.md) za glavne
+// sekcije + .docx za priloge — najpoželjniji format za parsing. Žalba:
+// PDF i Word.
+const ACCEPT_BY_TYPE: Record<string, string> = {
+  troskovnik: ".pdf,.xlsx,.arhigonfile",
+  don: ".md,.pdf,.docx,.doc",
+  zalba: ".pdf,.docx,.doc",
+  other: ".md,.pdf,.xlsx,.docx,.doc,.arhigonfile",
+};
 
 interface Props {
   documentType: DocumentType;
@@ -20,6 +29,7 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
   const [troskovnikType, setTroskovnikType] =
     useState<TroskovnikType>("nepoznato");
   const showTypeSelector = documentType === "troskovnik";
+  const accept = ACCEPT_BY_TYPE[documentType] || ACCEPT_BY_TYPE.other;
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
@@ -131,14 +141,21 @@ export function UploadDropzone({ documentType, onUploaded }: Props) {
           {uploading ? "Učitavam…" : "Povuci datoteku ovdje ili klikni za odabir"}
         </p>
         <p className="mt-2 text-sm text-muted">
-          Podržani formati: <code className="font-mono">.pdf</code>,{" "}
-          <code className="font-mono">.xlsx</code>,{" "}
-          <code className="font-mono">.arhigonfile</code> · maks. 50 MB
+          Podržani formati:{" "}
+          {accept
+            .split(",")
+            .map((ext, idx) => (
+              <span key={ext}>
+                {idx > 0 && ", "}
+                <code className="font-mono">{ext}</code>
+              </span>
+            ))}{" "}
+          · maks. 50 MB
         </p>
         <input
           ref={inputRef}
           type="file"
-          accept={ACCEPT}
+          accept={accept}
           className="hidden"
           onChange={onChange}
           disabled={uploading}
