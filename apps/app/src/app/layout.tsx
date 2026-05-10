@@ -52,6 +52,23 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * FOUC prevention: prije CSS-a, postavi `html.dark` ako je korisnik odabrao
+ * dark mode (ili "system" s OS u dark mode-u). Bez ovoga, prvi render bude
+ * light pa flicker u dark. Mora biti inline script — Next/Script s
+ * strategy="beforeInteractive" radi za bundled JS, ali ovo treba sinkroniziano.
+ */
+const themeInitScript = `
+(function() {
+  try {
+    var stored = localStorage.getItem('lexitor-theme');
+    var theme = stored || 'system';
+    var dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.documentElement.classList.add('dark');
+  } catch (e) {}
+})();
+`.trim();
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -59,7 +76,11 @@ export default function RootLayout({
     <html
       lang="hr"
       className={`${sans.variable} ${serif.variable} ${display.variable} ${accent.variable} ${mono.variable}`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="font-sans antialiased bg-surface text-ink">
         <AuthProvider>{children}</AuthProvider>
       </body>

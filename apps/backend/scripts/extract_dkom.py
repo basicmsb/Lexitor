@@ -282,31 +282,28 @@ def build_tool() -> dict[str, Any]:
     }
 
 
-def extract_decision(
+def _call_claude(
     client: anthropic.Anthropic,
     model: str,
     pdf_text: str,
     klasa_hint: str,
     cost: CostTracker,
+    extra_instruction: str = "",
 ) -> dict[str, Any] | None:
-    """Pošalji PDF text Claudeu i vrati strukturirani output."""
-    # Truncate ako je tekst predug — 60K tokena hard cap (Sonnet 4.5 context je 200K
-    # ali većina odluka stane u <15K)
-    if len(pdf_text) > 200_000:
-        pdf_text = pdf_text[:200_000] + "\n\n[TEKST ODSJEČEN]"
-
+    """Jedan API call. Vrati tool_use input dict ili None."""
     tool = build_tool()
     user_content = (
         f"Sljedeći tekst je DKOM odluka (klasa hint: {klasa_hint}). "
         "Izvuci strukturirane podatke pozivanjem tool-a `record_decision`.\n\n"
-        "=== TEKST ODLUKE ===\n"
-        f"{pdf_text}"
     )
+    if extra_instruction:
+        user_content += f"VAŽNO: {extra_instruction}\n\n"
+    user_content += f"=== TEKST ODLUKE ===\n{pdf_text}"
 
     try:
         msg = client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=8192,
             system=[
                 {
                     "type": "text",
@@ -336,9 +333,45 @@ def extract_decision(
     for block in msg.content:
         if block.type == "tool_use" and block.name == "record_decision":
             return block.input  # type: ignore[return-value]
-
-    log.error("Claude nije pozvao tool za %s — content: %s", klasa_hint, msg.content[:200])
     return None
+
+
+def extract_decision(
+    client: anthropic.Anthropic,
+    model: str,
+    pdf_text: str,
+    klasa_hint: str,
+    cost: CostTracker,
+) -> dict[str, Any] | None:
+    """Pošalji PDF text Claudeu i vrati strukturirani output. Ako prvi
+    pokušaj vrati malformiran rezultat (claims kao truncated string),
+    retry-aj s eksplicitnom uputom da skrati obrazloženja."""
+    if len(pdf_text) > 200_000:
+        pdf_text = pdf_text[:200_000] + "\n\n[TEKST ODSJEČEN]"
+
+    result = _call_claude(client, model, pdf_text, klasa_hint, cost)
+    if result is None:
+        return None
+
+    # Quick check — ako claims ili vijece dolaze kao truncated string,
+    # validation će fail-ati. Probaj odmah validation i ako ne prolazi,
+    # retry s kraćim outputom.
+    try:
+        DkomDecision.model_validate(result)
+        return result
+    except ValidationError:
+        log.info("  retry za %s — eksplicitno tražim kraći output", klasa_hint)
+        result = _call_claude(
+            client, model, pdf_text, klasa_hint, cost,
+            extra_instruction=(
+                "Prošli pokušaj je dao predugačak output koji je truncated. "
+                "MAKSIMALNO SAŽMI: argument_zalitelja, obrana_narucitelja i "
+                "dkom_obrazlozenje neka budu po JEDNA rečenica (do 200 znakova). "
+                "Ako ima više od 4 claims-ova, obrai samo top 4 najvažnija. "
+                "VRATI claims kao pravi JSON array, NE kao escape-iran string."
+            ),
+        )
+        return result
 
 
 # ---------------------------------------------------------------------------

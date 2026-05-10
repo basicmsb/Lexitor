@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/contexts/auth-context";
 
 const navigation = [
@@ -55,15 +56,16 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      <div className="p-3 border-t border-brand-border">
+      <div className="p-3 border-t border-brand-border space-y-2">
         {me?.user && (
-          <div className="px-3 py-2 mb-2">
+          <div className="px-3 py-2">
             <p className="text-sm font-medium text-ink truncate">
               {me.user.full_name ?? me.user.email}
             </p>
             <p className="text-xs text-muted truncate">{me.user.email}</p>
           </div>
         )}
+        <ThemeToggle />
         <button
           type="button"
           onClick={logout}

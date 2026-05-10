@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  /* Light mode — default, prema mockup-ima 2026 (Svjetla podloga) */
   --color-surface: #FAFAF8;
   --color-surface-2: #F2F2EE;
   --color-ink: #0B1320;
@@ -11,12 +12,46 @@
   --color-signal: #3B82C4;
   --color-gold: #B8893E;
   --color-border: #E0E0DA;
+  /* Status (semantički — ostaju kroz mode-ove, ali se mogu blago prilagoditi) */
+  --color-status-ok: #3F7D45;
+  --color-status-warn: #A87F2E;
+  --color-status-fail: #A8392B;
+  --color-status-uncertain: #6B4A8E;
+  --color-status-accepted: #2A6DB0;
+  --color-status-neutral: #7B7363;
+  /* Inverzne sjenke / transparentni overlay-i */
+  --color-overlay-soft: rgba(11, 19, 32, 0.05);
+  --color-overlay-medium: rgba(11, 19, 32, 0.1);
+}
+
+.dark {
+  /* Dark mode — prema mockup-ima 2026 (Tamna podloga) */
+  --color-surface: #0B1320;       /* bivši ink postaje bg */
+  --color-surface-2: #1A2332;     /* sekundarna ploha (cards) */
+  --color-ink: #F7F5F0;           /* warm white text */
+  --color-navy: #FAFAF8;          /* svjetla varijanta za headings */
+  --color-muted: #9B9892;         /* tihi tekst */
+  --color-signal: #3B82C4;        /* signal isti — kontrasta dovoljno */
+  --color-gold: #B8893E;          /* gold ostaje */
+  --color-border: rgba(247, 245, 240, 0.15); /* subtilan na dark */
+  /* Status — blago posvijetljeni za bolji kontrast na dark */
+  --color-status-ok: #5A9C5F;
+  --color-status-warn: #C99E4D;
+  --color-status-fail: #C95548;
+  --color-status-uncertain: #8B6BB0;
+  --color-status-accepted: #5497D4;
+  --color-status-neutral: #9C9683;
+  /* Inverzne sjenke za dark — svjetli overlay */
+  --color-overlay-soft: rgba(247, 245, 240, 0.05);
+  --color-overlay-medium: rgba(247, 245, 240, 0.1);
 }
 
 html,
 body {
   background-color: var(--color-surface);
   color: var(--color-ink);
+  /* Smooth transition kad korisnik prebaci mode */
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
 body {
@@ -25,5 +60,5 @@ body {
 }
 
 ::selection {
-  background-color: rgba(59, 130, 196, 0.2);
+  background-color: rgba(59, 130, 196, 0.25);
 }
