@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.analyzer.mock import _detect_brand_mentions
+from src.core.analyzer.mock import _build_findings, _detect_brand_mentions
+from src.document_parser.base import ParsedItem
 
 
 # ---------------------------------------------------------------------------
@@ -90,3 +91,53 @@ def test_disclaimer_far_from_brand_still_passes() -> None:
 def test_empty_text_no_flag() -> None:
     assert _detect_brand_mentions("") is None
     assert _detect_brand_mentions(None) is None  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# DON kindovi — brand_lock se mora aktivirati i za DON blokove,
+# ne samo za troškovničke stavke (regresija nakon 2026-05-10).
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kind",
+    ["paragraph", "requirement", "criterion", "list", "table"],
+)
+def test_brand_lock_fires_on_don_kinds(kind: str) -> None:
+    """DON blokovi (paragraph/requirement/criterion/list/table) moraju
+    pokrenuti brand_lock ako spominju marku bez „ili jednakovrijedno”."""
+    item = ParsedItem(
+        position=0,
+        text="Ponuditelj mora dostaviti hidroizolaciju Sika 300 PP.",
+        metadata={"kind": kind},
+    )
+    findings = _build_findings(item)
+    brand_findings = [f for f in findings if f.get("kind") == "brand_lock"]
+    assert len(brand_findings) == 1, f"brand_lock not fired for DON kind={kind}"
+    assert "Sika" in brand_findings[0]["explanation"]
+
+
+@pytest.mark.unit
+def test_brand_lock_skips_section_header_and_deadline() -> None:
+    """Naslov i deadline blokovi se preskaču — naslov nije specifikacija,
+    a rokovi gotovo nikad ne spominju marku."""
+    for kind in ("section_header", "deadline"):
+        item = ParsedItem(
+            position=0,
+            text="Sika 300 — krajnji rok 15.06.2026.",
+            metadata={"kind": kind},
+        )
+        findings = _build_findings(item)
+        assert not [f for f in findings if f.get("kind") == "brand_lock"]
+
+
+@pytest.mark.unit
+def test_don_brand_with_disclaimer_passes() -> None:
+    """DON requirement s legalnim disclaimerom — bez nalaza."""
+    item = ParsedItem(
+        position=0,
+        text="Hidroizolacija tipa kao Sika 300 PP ili jednakovrijedna.",
+        metadata={"kind": "requirement"},
+    )
+    findings = _build_findings(item)
+    assert not [f for f in findings if f.get("kind") == "brand_lock"]

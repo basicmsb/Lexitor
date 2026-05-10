@@ -30,10 +30,14 @@ def parse_document(path: Path) -> ParsedDocument:
         # i plain tekst (.txt nakon copy-paste s EOJN viewer-a)
         from src.document_parser.markdown_parser import parse_markdown
         return parse_markdown(path)
-    if suffix in (".docx", ".doc"):
-        # docx parser stiže — za sad raise s clear porukom
+    if suffix == ".docx":
+        from src.document_parser.docx_parser import parse_docx
+        return parse_docx(path)
+    if suffix == ".doc":
+        # Stari binary Word format — python-docx ne podržava. Korisnik
+        # neka konvertira u .docx (Word "Save As") ili .pdf.
         raise ParserError(
-            f"Format „{suffix}” će biti podržan u DON Sprintu. "
-            "Za sad konvertiraj u .md ili .pdf."
+            "Format „.doc” (stari Word binary) nije podržan. "
+            "Otvori u Wordu i spremi kao „.docx” ili „.pdf”."
         )
     raise ParserError(f"Nepodržani format: {suffix}")

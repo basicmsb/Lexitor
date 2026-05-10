@@ -703,8 +703,11 @@ def _build_findings(
     if item_kind == "stavka":
         findings.extend(run_per_row_rules(text, meta, troskovnik_type))
 
-    # Brand lock — applies to text-bearing items
-    if item_kind in ("stavka", "opci_uvjeti", "raw_text"):
+    # Troškovnik brand lock — primjenjuje se na troškovničke kindove
+    # (stavka, opci_uvjeti, raw_text). DON kindovi (paragraph/requirement/
+    # criterion/list/table) idu kroz `don_rules` registry niže.
+    TROSKOVNIK_BRAND_LOCK_KINDS = ("stavka", "opci_uvjeti", "raw_text")
+    if item_kind in TROSKOVNIK_BRAND_LOCK_KINDS:
         brand = _detect_brand_mentions(text)
         if brand is not None:
             brand_expl, brand_sugg = brand
@@ -718,6 +721,12 @@ def _build_findings(
                     "citations": [dict(_PLACEHOLDER_ZJN)],
                 }
             )
+
+    # DON pravila — modularan registry (vidi `don_rules.py`).
+    # Trenutno: brand_lock za DON kindove. Buduće: kratki_rok,
+    # vague_kriterij, diskrim_uvjeti dodaju se ondje bez diranja ovog mjesta.
+    from src.core.analyzer.don_rules import run_don_rules
+    findings.extend(run_don_rules(parsed_item))
 
     # Arithmetic (kol×cijena ≠ iznos, or >2 decimals on money values)
     arith = _detect_arithmetic_issues(meta)

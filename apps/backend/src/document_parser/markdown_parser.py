@@ -122,7 +122,18 @@ def parse_markdown(path: Path) -> ParsedDocument:
         text = path.read_text(encoding="cp1250", errors="replace")
     except Exception as exc:  # noqa: BLE001
         raise ParserError(f"Ne mogu čitati {path.name}: {exc}") from exc
+    return parse_text(text, source_format="markdown", filename=path.name)
 
+
+def parse_text(
+    text: str,
+    source_format: str = "markdown",
+    filename: str = "",
+) -> ParsedDocument:
+    """Parsa već učitani tekst (markdown ili docx-konvertiran) u ParsedDocument.
+
+    Koriste je i `parse_markdown` (čita .md/.txt) i `parse_docx`
+    (konvertira .docx u markdown-like tekst pa zove ovu funkciju)."""
     items: list[ParsedItem] = []
     current_chapter: dict[str, Any] | None = None
     chapter_stack: list[dict[str, Any]] = []  # za hijerarhiju
@@ -236,8 +247,8 @@ def parse_markdown(path: Path) -> ParsedDocument:
     return ParsedDocument(
         items=items,
         metadata={
-            "format": "markdown",
+            "format": source_format,
             "parser": "don-markdown",
-            "filename": path.name,
+            "filename": filename,
         },
     )
