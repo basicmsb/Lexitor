@@ -49,11 +49,26 @@ export interface DocumentPublic {
   size_bytes: number;
   document_type: DocumentType;
   troskovnik_type: TroskovnikType;
+  set_id?: string | null;
   created_at: string;
 }
 
 export interface DocumentList {
   items: DocumentPublic[];
+}
+
+export interface DocumentSetPublic {
+  id: string;
+  project_id: string;
+  name: string;
+  document_type: DocumentType;
+  documents: DocumentPublic[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentSetList {
+  items: DocumentSetPublic[];
 }
 
 export type AnalysisStatus = "pending" | "running" | "complete" | "error";

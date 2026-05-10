@@ -6,6 +6,8 @@ import type {
   AnalysisPublic,
   DocumentList,
   DocumentPublic,
+  DocumentSetList,
+  DocumentSetPublic,
   DocumentType,
   KnowledgeSearchResponse,
   KnowledgeSourceKind,
@@ -136,15 +138,39 @@ export const api = {
     file: File,
     type: DocumentType,
     troskovnikType: TroskovnikType = "nepoznato",
+    setId?: string,
   ): Promise<DocumentPublic> {
     const form = new FormData();
     form.append("file", file);
     form.append("document_type", type);
     form.append("troskovnik_type", troskovnikType);
+    if (setId) form.append("set_id", setId);
     return request<DocumentPublic>("/documents", {
       method: "POST",
       body: form,
     });
+  },
+
+  async createDocumentSet(
+    name: string,
+    documentType: DocumentType = "don",
+  ): Promise<DocumentSetPublic> {
+    return request<DocumentSetPublic>("/documents/sets", {
+      method: "POST",
+      body: JSON.stringify({ name, document_type: documentType }),
+    });
+  },
+
+  async listDocumentSets(): Promise<DocumentSetList> {
+    return request<DocumentSetList>("/documents/sets");
+  },
+
+  async getDocumentSet(id: string): Promise<DocumentSetPublic> {
+    return request<DocumentSetPublic>(`/documents/sets/${id}`);
+  },
+
+  async deleteDocumentSet(id: string): Promise<void> {
+    await request<void>(`/documents/sets/${id}`, { method: "DELETE" });
   },
 
   async updateDocumentMeta(

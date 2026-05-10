@@ -7,6 +7,7 @@ from src.models.analysis import (
 )
 from src.models.citation import Citation, CitationSource
 from src.models.document import Document, DocumentType, TroskovnikType
+from src.models.document_set import DocumentSet
 from src.models.project import Project
 from src.models.user import User, UserRole
 
@@ -18,6 +19,7 @@ __all__ = [
     "Citation",
     "CitationSource",
     "Document",
+    "DocumentSet",
     "DocumentType",
     "TroskovnikType",
     "Project",

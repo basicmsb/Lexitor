@@ -40,6 +40,7 @@ async def save_uploaded_document(
     user: User,
     document_type: DocumentType,
     troskovnik_type: TroskovnikType | None = None,
+    set_id: uuid.UUID | None = None,
 ) -> Document:
     if not upload.filename:
         raise DocumentValidationError("Nedostaje ime datoteke.")
@@ -68,6 +69,7 @@ async def save_uploaded_document(
         storage_path=str(storage_path),
         document_type=document_type,
         troskovnik_type=troskovnik_type or TroskovnikType.NEPOZNATO,
+        set_id=set_id,
     )
     session.add(document)
     await session.commit()

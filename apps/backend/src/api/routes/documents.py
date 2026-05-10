@@ -8,9 +8,17 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 
+from sqlalchemy.orm import selectinload
+
 from src.api.deps import CurrentUser, DbSession
-from src.api.schemas.document import DocumentList, DocumentPublic
-from src.models import Document, DocumentType, TroskovnikType
+from src.api.schemas.document import (
+    DocumentList,
+    DocumentPublic,
+    DocumentSetCreate,
+    DocumentSetList,
+    DocumentSetPublic,
+)
+from src.models import Document, DocumentSet, DocumentType, TroskovnikType
 from src.services.document_service import (
     DocumentValidationError,
     save_uploaded_document,
@@ -30,7 +38,18 @@ async def upload_document(
     troskovnik_type: Annotated[
         TroskovnikType, Form(...)
     ] = TroskovnikType.NEPOZNATO,
+    set_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> DocumentPublic:
+    """Upload jednog fajla. `set_id` opcionalno povezuje fajl s postojećim
+    DocumentSet-om (multi-file DON upload zove ovaj endpoint N puta s
+    istim set_id-om)."""
+    if set_id is not None:
+        ds = await session.get(DocumentSet, set_id)
+        if ds is None or ds.project_id != current_user.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Set ne postoji ili nije iz tvog projekta.",
+            )
     try:
         document = await save_uploaded_document(
             session=session,
@@ -38,10 +57,94 @@ async def upload_document(
             user=current_user,
             document_type=document_type,
             troskovnik_type=troskovnik_type,
+            set_id=set_id,
         )
     except DocumentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return DocumentPublic.model_validate(document)
+
+
+@router.post(
+    "/sets", response_model=DocumentSetPublic, status_code=status.HTTP_201_CREATED,
+)
+async def create_document_set(
+    payload: DocumentSetCreate,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> DocumentSetPublic:
+    """Kreiraj prazan DocumentSet (grupa fajlova jednog DON-a). Fajlovi se
+    upload-aju kroz `POST /documents` s `set_id` form param-om."""
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ime seta je obavezno.",
+        )
+    ds = DocumentSet(
+        project_id=current_user.project_id,
+        name=name,
+        document_type=payload.document_type,
+    )
+    session.add(ds)
+    await session.commit()
+    await session.refresh(ds, attribute_names=["documents"])
+    return DocumentSetPublic.model_validate(ds)
+
+
+@router.get("/sets", response_model=DocumentSetList)
+async def list_document_sets(
+    current_user: CurrentUser,
+    session: DbSession,
+) -> DocumentSetList:
+    stmt = (
+        select(DocumentSet)
+        .where(DocumentSet.project_id == current_user.project_id)
+        .options(selectinload(DocumentSet.documents))
+        .order_by(DocumentSet.created_at.desc())
+        .limit(200)
+    )
+    result = await session.execute(stmt)
+    sets = result.scalars().all()
+    return DocumentSetList(items=[DocumentSetPublic.model_validate(s) for s in sets])
+
+
+@router.get("/sets/{set_id}", response_model=DocumentSetPublic)
+async def get_document_set(
+    set_id: uuid.UUID,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> DocumentSetPublic:
+    stmt = (
+        select(DocumentSet)
+        .where(DocumentSet.id == set_id)
+        .options(selectinload(DocumentSet.documents))
+    )
+    result = await session.execute(stmt)
+    ds = result.scalar_one_or_none()
+    if ds is None or ds.project_id != current_user.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Set nije pronađen."
+        )
+    return DocumentSetPublic.model_validate(ds)
+
+
+@router.delete("/sets/{set_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document_set(
+    set_id: uuid.UUID,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> Response:
+    """Obriši cijeli set + sve fajlove u njemu (cascade)."""
+    ds = await session.get(DocumentSet, set_id)
+    if ds is None or ds.project_id != current_user.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Set nije pronađen."
+        )
+    # Documents su s cascade="all, delete-orphan" pa će ih SA obrisati.
+    # Storage cleanup nije sad — ostaju na disku do garbage collection-a.
+    await session.delete(ds)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/{document_id}", response_model=DocumentPublic)

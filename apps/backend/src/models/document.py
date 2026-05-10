@@ -12,6 +12,7 @@ from src.db.session import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from src.models.analysis import Analysis
+    from src.models.document_set import DocumentSet
     from src.models.project import Project
     from src.models.user import User
 
@@ -72,9 +73,20 @@ class Document(Base, TimestampMixin):
         server_default=TroskovnikType.NEPOZNATO.name,
         nullable=False,
     )
+    # Optionalni FK na DocumentSet (grupa fajlova jednog DON-a / nabave).
+    # Nullable jer postojeći troškovnici i samostalni dokumenti nemaju set.
+    # Multi-upload za DON kreira set + sve fajlove veže s istim set_id.
+    set_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_sets.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
 
     project: Mapped[Project] = relationship(back_populates="documents", lazy="selectin")
     uploaded_by: Mapped[User | None] = relationship(lazy="selectin")
+    document_set: Mapped[DocumentSet | None] = relationship(
+        back_populates="documents", lazy="selectin",
+    )
     analyses: Mapped[list[Analysis]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
