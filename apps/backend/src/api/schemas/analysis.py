@@ -34,6 +34,7 @@ class FindingCitation(BaseModel):
     reference: str
     snippet: str | None = None
     url: str | None = None
+    page: int | None = None
 
 
 class FindingPublic(BaseModel):
@@ -87,6 +88,7 @@ class AnalysisItemPublic(BaseModel):
     user_comment: str | None = None
     include_in_pdf: bool = True
     user_added_findings: list[UserAddedFinding] | None = None
+    user_kind_override: str | None = None
 
 
 class AnalysisItemFeedbackUpdate(BaseModel):
@@ -99,8 +101,10 @@ class AnalysisItemFeedbackUpdate(BaseModel):
     user_verdict: UserVerdict | None = None
     user_comment: str | None = None
     include_in_pdf: bool | None = None
+    user_kind_override: str | None = None
     # Sentinel to clear verdict/comment without omitting the field
     clear_verdict: bool = False
+    clear_kind_override: bool = False
 
 
 class AnalysisPublic(BaseModel):

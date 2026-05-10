@@ -42,9 +42,38 @@ interface Props {
  *  without prop-drilling analysisId through every layout component. */
 const AnalysisIdContext = createContext<string>("");
 
-export function AnalysisResults({ status, progress, items, summary, error, analysisId }: Props) {
+/** Map item.id → user_kind_override za optimistic update (bez full page
+ *  reload-a). Dropdown poziva applyOverride; useMergedItems mergeuje
+ *  ovo nad items prop-om prije rendering-a. */
+type OverridesContextValue = {
+  overrides: Record<string, string | null>;
+  applyOverride: (itemId: string, value: string | null) => void;
+};
+const KindOverridesContext = createContext<OverridesContextValue>({
+  overrides: {},
+  applyOverride: () => undefined,
+});
+
+export function AnalysisResults({ status, progress, items: rawItems, summary, error, analysisId }: Props) {
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
   const [visibleId, setVisibleId] = useState<string | null>(null);
+  const [kindOverrides, setKindOverrides] = useState<Record<string, string | null>>({});
+
+  const applyOverride = useCallback((itemId: string, value: string | null) => {
+    setKindOverrides((prev) => ({ ...prev, [itemId]: value }));
+  }, []);
+
+  // Merge raw items s lokalnim override map-om — dropdown updateuje
+  // override, items se re-renderiraju ispravno bez page reload-a.
+  const items = useMemo(() => {
+    if (Object.keys(kindOverrides).length === 0) return rawItems;
+    return rawItems.map((it) => {
+      if (it.id in kindOverrides) {
+        return { ...it, user_kind_override: kindOverrides[it.id] };
+      }
+      return it;
+    });
+  }, [rawItems, kindOverrides]);
 
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -114,6 +143,7 @@ export function AnalysisResults({ status, progress, items, summary, error, analy
 
   return (
     <AnalysisIdContext.Provider value={analysisId}>
+    <KindOverridesContext.Provider value={{ overrides: kindOverrides, applyOverride }}>
     <div className="flex flex-col gap-4 h-[calc(100vh-200px)]">
       <Header status={status} progress={progress} summary={summary} error={error} count={items.length} />
 
@@ -183,6 +213,7 @@ export function AnalysisResults({ status, progress, items, summary, error, analy
         </div>
       </div>
     </div>
+    </KindOverridesContext.Provider>
     </AnalysisIdContext.Provider>
   );
 }
@@ -655,11 +686,13 @@ function OpciUvjetiDetail({
   accent,
   label,
   kind,
+  autoKind,
 }: {
   item: AnalysisItemPublic;
   accent: string;
   label: string;
   kind: string;
+  autoKind: string;
 }) {
   const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
   const row = typeof meta.row === "number" ? meta.row : null;
@@ -681,9 +714,7 @@ function OpciUvjetiDetail({
         style={{ borderLeftColor: accent }}
       >
         <header className="flex items-start justify-between gap-4 mb-2">
-          <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
-            {heading}
-          </span>
+          <KindOverrideDropdown item={item} autoKind={autoKind} currentKind={kind} />
         </header>
         <div className="flex gap-3">
           <span
@@ -718,16 +749,16 @@ function OpciUvjetiDetail({
 function SectionHeaderDetail({
   item,
   kind,
+  autoKind,
 }: {
   item: AnalysisItemPublic;
   kind: string;
+  autoKind: string;
 }) {
   const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
   const depth = typeof meta.depth === "number" ? meta.depth : 0;
   const rb = typeof meta.rb === "string" ? meta.rb : null;
   const title = typeof meta.title === "string" ? meta.title : null;
-  const fallbackLabel =
-    kind === "recap_section" ? "Rekapitulacija — grupa" : "Sekcija";
 
   // Wider indent for deeper levels, capped so the layout stays readable.
   const indentClass =
@@ -737,14 +768,14 @@ function SectionHeaderDetail({
     <article
       className={`rounded-lg border border-brand-border bg-surface-2/40 px-6 py-3 ${indentClass}`}
     >
-      <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
-        {fallbackLabel}
+      <header className="flex items-center gap-3">
+        <KindOverrideDropdown item={item} autoKind={autoKind} currentKind={kind} />
         {depth > 0 && (
-          <span className="ml-2 text-muted/70 normal-case tracking-normal">
+          <span className="text-[11px] text-muted/70 normal-case">
             razina {depth}
           </span>
         )}
-      </span>
+      </header>
       <h3 className="font-display text-lg text-ink leading-snug mt-1 flex items-baseline gap-3">
         {rb && <span className="font-mono text-muted text-sm">{rb}</span>}
         <span>{title || item.text || item.label}</span>
@@ -1078,7 +1109,10 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
       : metaTitle.trim()
         ? metaTitle
         : null;
-  const kind = typeof meta.kind === "string" ? meta.kind : "stavka";
+  // user_kind_override (kad korisnik ručno promijeni tip kroz UI dropdown
+  // ako parser pogriješi) ima prioritet nad auto-detektiranim metadata.kind.
+  const autoKind = typeof meta.kind === "string" ? meta.kind : "stavka";
+  const kind = item.user_kind_override || autoKind;
   const isGroupSum = kind === "group_sum";
   const isRecapSection = kind === "recap_section";
   const isRecapSumLike =
@@ -1103,7 +1137,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     );
   }
   if (isRecapSection || kind === "section_header") {
-    return <SectionHeaderDetail item={item} kind={kind} />;
+    return <SectionHeaderDetail item={item} kind={kind} autoKind={autoKind} />;
   }
   if (isRecapLine || isRecapPdv || isRecapExtra) {
     return (
@@ -1111,7 +1145,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
     );
   }
   if (kind === "opci_uvjeti" || kind === "raw_text" || kind === "tekst") {
-    return <OpciUvjetiDetail item={item} accent={accent} label={label} kind={kind} />;
+    return <OpciUvjetiDetail item={item} accent={accent} label={label} kind={kind} autoKind={autoKind} />;
   }
 
   // Build per-line segments mapped to their Excel row + char offsets in
@@ -1175,6 +1209,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
           reference: c.reference,
           snippet: c.snippet ?? "",
           url: c.url ?? null,
+          page: c.page ?? null,
         })),
         item,
         isMock: f.is_mock,
@@ -1218,9 +1253,7 @@ function ItemDetail({ item }: { item: AnalysisItemPublic }) {
           </nav>
         )}
         <header className="flex items-start justify-between gap-4 mb-3">
-          <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
-            Stavka
-          </span>
+          <KindOverrideDropdown item={item} autoKind={autoKind} currentKind={kind} />
           {rb && <span className="text-sm text-muted font-mono">{rb}</span>}
         </header>
 
@@ -1623,26 +1656,9 @@ function FindingCard({
       {citations.length > 0 && (
         <>
           <hr className="my-5 border-brand-border" />
-          <ul className="space-y-1 text-xs font-mono text-muted">
+          <ul className="space-y-2 text-xs">
             {citations.map((c) => (
-              <li key={c.id}>
-                <span className="text-navy">
-                  {SOURCE_LABEL[c.source] ?? c.source.toUpperCase()} {c.reference}
-                </span>
-                {c.url && (
-                  <>
-                    {" · "}
-                    <a
-                      href={citationUrlWithFragment(c)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-signal hover:underline"
-                    >
-                      otvori izvor
-                    </a>
-                  </>
-                )}
-              </li>
+              <CitationItem key={c.id} c={c} />
             ))}
           </ul>
         </>
@@ -1652,6 +1668,203 @@ function FindingCard({
     </article>
   );
 }
+
+/** Citation s expandable snippet preview-om. Klik na referencu otvara
+ *  izvadak (text iz Qdrant chunk-a koji je matchiran). "otvori izvor"
+ *  ide na PDF s #page=N fragmentom (browser PDF viewer skače na pravu
+ *  stranicu). Score se ne prikazuje da bi feedback bio fokusiran na
+ *  semantički sadržaj, ne tehnikalije retrieval-a. */
+function CitationItem({ c }: { c: CitationPublic }) {
+  const [open, setOpen] = useState(false);
+  const sourceLabel = SOURCE_LABEL[c.source] ?? c.source.toUpperCase();
+  const hasSnippet = !!c.snippet && c.snippet.trim().length > 0;
+
+  return (
+    <li className="font-mono text-muted">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => hasSnippet && setOpen((v) => !v)}
+          disabled={!hasSnippet}
+          className={`text-navy ${
+            hasSnippet ? "hover:text-ink cursor-pointer" : "cursor-default"
+          }`}
+          title={hasSnippet ? "Klikni za izvadak iz dokumenta" : ""}
+        >
+          {sourceLabel} {c.reference}
+          {c.page && (
+            <span className="ml-1 text-muted/70 normal-case">
+              · str. {c.page}
+            </span>
+          )}
+          {hasSnippet && (
+            <span className="ml-1 text-[10px] opacity-60">
+              {open ? "▴" : "▾"}
+            </span>
+          )}
+        </button>
+        {c.url && (
+          <a
+            href={citationUrlWithFragment(c)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-signal hover:underline normal-case"
+          >
+            otvori izvor →
+          </a>
+        )}
+      </div>
+      {open && hasSnippet && (
+        <blockquote className="mt-1.5 ml-1 pl-3 py-1.5 border-l-2 border-brand-border bg-surface-2/50 text-[11px] font-sans text-navy leading-relaxed italic whitespace-pre-line">
+          {c.snippet}
+        </blockquote>
+      )}
+    </li>
+  );
+}
+
+
+/** Dropdown za override-anje tipa elementa kad parser pogriješi.
+ *  Default: prikazuje auto-detektirani tip kao label. Klik otvara mali
+ *  popover s opcijama; "Auto" znači "vrati se na parser-ov tip". */
+const KIND_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "stavka", label: "Stavka" },
+  { value: "section_header", label: "Sekcija / podgrupa" },
+  { value: "opci_uvjeti", label: "Opći uvjet / opis" },
+  { value: "tekst", label: "Tekst (informativno)" },
+  { value: "group_sum", label: "UKUPNO (suma grupe)" },
+  { value: "recap_line", label: "Rekapitulacija — red" },
+  { value: "recap_total", label: "Rekapitulacija — UKUPNO" },
+  { value: "recap_grand", label: "Rekapitulacija — SVEUKUPNO" },
+  { value: "recap_pdv", label: "Rekapitulacija — PDV" },
+];
+
+function kindOptionLabel(k: string): string {
+  const found = KIND_OPTIONS.find((o) => o.value === k);
+  if (found) return found.label;
+  if (k === "recap_section") return "Rekapitulacija — grupa";
+  if (k === "recap_subtotal" || k === "recap_total" || k === "recap_grand")
+    return "Rekapitulacija — suma";
+  if (k === "recap_line") return "Rekapitulacija — red";
+  if (k === "raw_text") return "Tekst";
+  return k;
+}
+
+function KindOverrideDropdown({
+  item,
+  autoKind,
+  currentKind,
+}: {
+  item: AnalysisItemPublic;
+  autoKind: string;
+  currentKind: string;
+}) {
+  const analysisId = useContext(AnalysisIdContext);
+  const { applyOverride } = useContext(KindOverridesContext);
+  const [open, setOpen] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const savedTimer = useRef<number | null>(null);
+  const isOverridden = !!item.user_kind_override;
+
+  const onSelect = async (value: string | null) => {
+    if (!analysisId) return;
+    setSaveState("saving");
+    // Optimistic update — UI prikazuje novi kind odmah
+    applyOverride(item.id, value);
+    try {
+      if (value === null) {
+        await api.updateItemFeedback(analysisId, item.id, {
+          clear_kind_override: true,
+        });
+      } else {
+        await api.updateItemFeedback(analysisId, item.id, {
+          user_kind_override: value,
+        });
+      }
+      setSaveState("saved");
+      if (savedTimer.current) window.clearTimeout(savedTimer.current);
+      savedTimer.current = window.setTimeout(() => {
+        setSaveState((s) => (s === "saved" ? "idle" : s));
+      }, 1500);
+    } catch (e) {
+      console.error("kind override failed", e);
+      setSaveState("error");
+      // Revert optimistic update on error
+      applyOverride(item.id, item.user_kind_override ?? null);
+    }
+  };
+
+  return (
+    <div className="relative inline-flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={saveState === "saving"}
+        className={`text-[11px] uppercase tracking-[0.18em] font-semibold transition ${
+          isOverridden
+            ? "text-[#3B82C4] underline decoration-dotted"
+            : "text-muted hover:text-ink"
+        }`}
+        title="Promijeni tip elementa"
+      >
+        {kindOptionLabel(currentKind)}
+        <span className="ml-1 text-[9px] opacity-60">▾</span>
+      </button>
+      {isOverridden && (
+        <span className="text-[10px] text-[#3B82C4] normal-case">
+          (override)
+        </span>
+      )}
+      {saveState === "saving" && (
+        <span className="text-[10px] text-muted normal-case">Spremam…</span>
+      )}
+      {saveState === "saved" && (
+        <span className="text-[10px] text-[#2C5832] normal-case">Spremljeno ✓</span>
+      )}
+      {saveState === "error" && (
+        <span className="text-[10px] text-[#A8392B] normal-case">Greška</span>
+      )}
+      {open && (
+        <div className="absolute top-full left-0 z-20 mt-1 min-w-[220px] rounded-md border border-brand-border bg-white shadow-lg">
+          <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-muted border-b border-brand-border">
+            Auto: {kindOptionLabel(autoKind)}
+          </div>
+          {KIND_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                void onSelect(opt.value);
+              }}
+              className={`block w-full text-left px-3 py-1.5 text-sm transition hover:bg-surface-2 ${
+                currentKind === opt.value ? "font-medium text-ink" : "text-navy"
+              }`}
+            >
+              {opt.label}
+              {opt.value === autoKind && (
+                <span className="ml-2 text-[10px] text-muted">auto</span>
+              )}
+            </button>
+          ))}
+          {isOverridden && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                void onSelect(null);
+              }}
+              className="block w-full text-left px-3 py-1.5 text-sm text-muted hover:bg-surface-2 border-t border-brand-border italic"
+            >
+              ↶ Vrati na auto
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function Section({
   accent,

@@ -74,6 +74,7 @@ export interface CitationPublic {
   reference: string;
   snippet: string;
   url: string | null;
+  page?: number | null;
 }
 
 export interface HighlightSpan {
@@ -104,6 +105,7 @@ export interface FindingCitation {
   reference: string;
   snippet?: string | null;
   url?: string | null;
+  page?: number | null;
 }
 
 export interface FindingPublic {
@@ -131,13 +133,16 @@ export interface AnalysisItemPublic {
   user_comment?: string | null;
   include_in_pdf?: boolean;
   user_added_findings?: UserAddedFinding[] | null;
+  user_kind_override?: string | null;
 }
 
 export interface AnalysisItemFeedbackUpdate {
   user_verdict?: UserVerdict | null;
   user_comment?: string | null;
   include_in_pdf?: boolean;
+  user_kind_override?: string | null;
   clear_verdict?: boolean;
+  clear_kind_override?: boolean;
 }
 
 export interface AnalysisSummary {

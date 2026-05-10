@@ -65,11 +65,17 @@ async def export_labels(
     #   s eksplicitnim feedback-om), tretiramo kao implicit_correct
     #   (korisnik je vidio i prešao bez prigovora). Inače dokument još
     #   nije pregledan → ne ulazi u export.
+    # Dokument se računa kao "aktivno označavan" ako ima bar 1 stavku s
+    # ručnim signalom: verdict, dodan nalaz, ili kind override.
     docs_with_activity: set[uuid.UUID] = {
         it.analysis.document_id
         for it in items
         if it.analysis is not None
-        and (it.user_verdict is not None or bool(it.user_added_findings))
+        and (
+            it.user_verdict is not None
+            or bool(it.user_added_findings)
+            or bool(it.user_kind_override)
+        )
     }
 
     exported: list[dict[str, Any]] = []
@@ -83,15 +89,17 @@ async def export_labels(
         has_verdict = it.user_verdict is not None
         has_added = bool(it.user_added_findings)
         has_la_findings = bool(it.findings)
-        item_kind = (it.metadata_json or {}).get("kind")
+        has_kind_override = bool(it.user_kind_override)
+        item_kind_auto = (it.metadata_json or {}).get("kind")
+        item_kind = it.user_kind_override or item_kind_auto
 
-        # Stavke bez ikakvog signala (no findings, no verdict, no added)
-        # nisu informativne kao few-shot: LA nije ništa rekao, korisnik
-        # nije ništa rekao. Prebacujemo samo ako ima bar jedan signal.
-        # Iznimka: svi non-stavka kindovi (opci_uvjeti, recap, section_header)
-        # ulaze samo ako imaju eksplicitan signal — automatska "uskladeno"
-        # za section_header nije korisno za LLM.
-        if not has_verdict and not has_added:
+        # Stavke bez ikakvog signala (no findings, no verdict, no added,
+        # no kind override) nisu informativne kao few-shot: LA nije ništa
+        # rekao, korisnik nije ništa rekao. Prebacujemo samo ako ima bar
+        # jedan signal. Iznimka: non-stavka kindovi ulaze samo ako imaju
+        # eksplicitan signal — automatska "uskladeno" za section_header
+        # nije korisno za LLM.
+        if not has_verdict and not has_added and not has_kind_override:
             if not has_la_findings:
                 continue
             if item_kind not in ("stavka", "opci_uvjeti"):
@@ -119,7 +127,9 @@ async def export_labels(
                 "troskovnik_type": document.troskovnik_type.value,
                 "position": it.position,
                 "label": it.label,
-                "kind": item_kind,
+                "kind": item_kind,  # resolved (override > auto)
+                "kind_auto": item_kind_auto,  # parser-detected
+                "kind_override": it.user_kind_override,  # user-provided override (or None)
                 "text": it.text,
                 "metadata_json": it.metadata_json,
                 "la_findings": it.findings or [],

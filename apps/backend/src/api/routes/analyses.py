@@ -244,6 +244,11 @@ async def update_item_feedback(
     if payload.include_in_pdf is not None:
         item.include_in_pdf = payload.include_in_pdf
 
+    if payload.clear_kind_override:
+        item.user_kind_override = None
+    elif payload.user_kind_override is not None:
+        item.user_kind_override = payload.user_kind_override.strip() or None
+
     # Validation: incorrect verdict requires a comment
     if (
         item.user_verdict == UserVerdict.INCORRECT
@@ -429,11 +434,26 @@ async def export_analysis_pdf(
     )
 
     safe_name = document.filename.rsplit(".", 1)[0]
-    filename = f"lexitor-{safe_name}.pdf"
+    full_filename = f"lexitor-{safe_name}.pdf"
+    # HTTP headers su latin-1 only (RFC 7230). Croatian dijakritici (š,č,…)
+    # razbijaju ih. RFC 5987 dopušta UTF-8 encoded filename* uz ASCII
+    # fallback `filename` — moderni browseri koriste filename*, stari
+    # ASCII verziju.
+    from urllib.parse import quote
+    ascii_filename = (
+        full_filename
+        .encode("ascii", errors="replace")
+        .decode("ascii")
+        .replace("?", "_")
+    )
+    utf8_filename = quote(full_filename, safe="")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_filename}"; '
+                f"filename*=UTF-8''{utf8_filename}"
+            ),
         },
     )

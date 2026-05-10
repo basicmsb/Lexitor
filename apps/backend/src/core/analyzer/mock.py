@@ -156,19 +156,86 @@ async def _build_citations(
     item_status: AnalysisItemStatus,
     item_text: str,
 ) -> list[dict[str, Any]]:
-    """Build citations for a flagged item.
+    """Build citations for a flagged item via Qdrant retrieval (RAG).
 
-    Cohere trial key is exhausted (1000 calls/month) — RAG retrieval is
-    temporarily disabled so the analyzer doesn't stall ~138s per item on
-    rate-limit retries. We fall back to the placeholder ZJN reference;
-    real DKOM citations come back when we move to a paid key or run with
-    Anthropic Citations.
+    Embeduje item_text, traži top-3 najslično ZJN/DKOM chunkove. Ako
+    pretraga padne (mreža, prazan korpus), vrati placeholder ZJN ref kao
+    fallback. Production Cohere key (paid, 2026-05-10).
     """
     if item_status == AnalysisItemStatus.OK:
         return []
-    # item_text retained in signature for future RAG re-enable
-    _ = item_text
-    return [dict(_PLACEHOLDER_ZJN)]
+    if not item_text or not item_text.strip():
+        return [dict(_PLACEHOLDER_ZJN)]
+    try:
+        # Lazy import: izbjegava circular dependency u testovima
+        from src.knowledge_base import search
+
+        hits = await search(item_text[:500], limit=3)
+        citations = [_hit_to_citation(h) for h in hits]
+        return citations or [dict(_PLACEHOLDER_ZJN)]
+    except Exception:  # noqa: BLE001 — RAG fail ne smije ubiti analizu
+        logger.exception("RAG retrieval failed za item, koristim placeholder")
+        return [dict(_PLACEHOLDER_ZJN)]
+
+
+def _hit_to_citation(hit: Any) -> dict[str, Any]:
+    """Mapiranje SearchHit → citation dict za FindingCitation schema.
+
+    Razlikuje ZJN (klasa starts with 'ZJN') od DKOM odluka (UP/II-…)
+    po prefiksu klasa polja. Dodaje #page=N fragment u URL ako PDF
+    viewer podržava skok na stranicu (Chrome/Edge/Firefox za PDF.js)."""
+    klasa = hit.klasa or ""
+    klasa_lower = klasa.lower()
+    if klasa.startswith("UP/"):
+        source = CitationSource.DKOM
+    elif (
+        klasa.startswith("ZJN")
+        or klasa_lower.startswith("pravilnik")
+        or klasa_lower.startswith("zakon")
+    ):
+        # Sva hrvatska zakonska legislativa pod ZJN umbrellom u UI-u
+        # (klasa tekst razlikuje: "ZJN čl. 207", "Pravilnik NN 65/2017 čl. 12",
+        # "Zakon NN 18/2013 čl. 5", itd.)
+        source = CitationSource.ZJN
+    else:
+        source = CitationSource.OTHER
+    snippet = (hit.text or "").strip()
+    if len(snippet) > 600:
+        snippet = snippet[:597] + "…"
+    page = hit.page
+    url = hit.pdf_url
+    if url and page:
+        # browser PDF viewer: #page=N skače na traženu stranicu
+        sep = "&" if "#" in url else "#"
+        url = f"{url}{sep}page={page}"
+    return {
+        "source": source,
+        "reference": klasa,
+        "snippet": snippet,
+        "url": url,
+        "page": page,
+    }
+
+
+async def _enrich_findings_with_citations(
+    findings: list[dict[str, Any]],
+    item_text: str,
+) -> None:
+    """In-place: zamijeni placeholder citate u findings s realnim Qdrant
+    hitsima. Jedan search call po stavci (ne po finding-u) — sve findings
+    iste stavke dobivaju isti citation set."""
+    has_real_finding = any(
+        f.get("status") in ("warn", "fail", "uncertain") and not f.get("is_mock")
+        for f in findings
+    )
+    if not has_real_finding:
+        return
+    real_citations = await _build_citations(AnalysisItemStatus.WARN, item_text)
+    if not real_citations:
+        return
+    for f in findings:
+        if f.get("status") in ("warn", "fail", "uncertain"):
+            f["citations"] = real_citations
 
 
 def _explanation_for(
@@ -788,6 +855,10 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
         for index, parsed_item in enumerate(parsed.items):
             await asyncio.sleep(random.uniform(0.15, 0.45))
             findings = _build_findings(parsed_item, troskovnik_type)
+            # Enrich findings sa real ZJN/DKOM citatima preko Qdrant retrieval-a
+            await _enrich_findings_with_citations(
+                findings, parsed_item.text or ""
+            )
             highlights = _build_highlights(
                 parsed_item.text, _aggregate_status(findings)
             )

@@ -124,6 +124,12 @@ class AnalysisItem(Base, TimestampMixin):
     # `findings` (analyzer output) so the export endpoint can label them
     # as "LA propustio" (missed) vs "LA pronašao + verdict".
     user_added_findings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Override za `kind` ako parser pogriješi (npr. red "2.7. Demontaža…"
+    # je section_header u parser-u, ali stvarno je stavka s podstavkama).
+    # NULL = bez override-a (frontend koristi metadata.kind).
+    user_kind_override: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+    )
 
     analysis: Mapped[Analysis] = relationship(back_populates="items")
     citations: Mapped[list[Citation]] = relationship(
