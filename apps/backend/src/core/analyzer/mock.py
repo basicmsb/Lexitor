@@ -974,6 +974,19 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             await _mark_failed(session, analysis, f"Parser greška: {exc}")
             return
 
+        # Fallback: ako filename heuristika ne detektira subtype, koristi
+        # Document.document_type — TROSKOVNIK uvijek znači subtype "troskovnik"
+        # bez obzira na filename.
+        if not parsed.metadata.get("document_subtype"):
+            from src.models.document import DocumentType
+            if document.document_type == DocumentType.TROSKOVNIK:
+                parsed.metadata["document_subtype"] = "troskovnik"
+                for it in parsed.items:
+                    it.metadata.setdefault("document_subtype", "troskovnik")
+            elif document.document_type == DocumentType.DON:
+                # DON je previše general — ostavi None pa svi rule-ovi aktivni
+                pass
+
         analysis.status = AnalysisStatus.RUNNING
         analysis.progress_percent = 0
         await session.commit()

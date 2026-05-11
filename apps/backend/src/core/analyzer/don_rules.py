@@ -384,7 +384,12 @@ def _neprecizna_specifikacija_impl(item: ParsedItem) -> list[Finding]:
 
 don_rule(
     name="neprecizna_specifikacija",
-    applies_to=("paragraph", "requirement", "list", "table"),
+    applies_to=(
+        # DON kindovi
+        "paragraph", "requirement", "list", "table",
+        # Troškovnik kindovi — neprecizna spec često u opisu stavke
+        "stavka", "opci_uvjeti", "raw_text",
+    ),
     applies_to_subtypes=(
         # Neprecizna specifikacija se događa u: tehničke specifikacije,
         # troškovnik. NE u kriterijima ponuditeljima ili općim podacima.
