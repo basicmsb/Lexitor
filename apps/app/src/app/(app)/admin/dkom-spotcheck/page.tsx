@@ -198,6 +198,20 @@ export default function DkomSpotcheckPage() {
         </div>
       </div>
 
+      {/* Instrukcija — što točno ocjenjujem */}
+      <div className="rounded-lg border border-signal/30 bg-signal/5 p-4">
+        <p className="text-sm text-ink">
+          <span className="font-semibold">Što ocjenjujem:</span> je li{" "}
+          <span className="text-gold font-medium">LLM kategorija</span> točan opis{" "}
+          <span className="text-navy font-medium">Argumenta žalitelja</span>?
+        </p>
+        <p className="text-xs text-muted mt-1.5 leading-relaxed">
+          DKOM obrazloženje i verdikt (UVAZEN/ODBIJEN) je samo <em>kontekst</em>{" "}
+          — ne ocjenjuješ DKOM-ovu odluku, samo LLM-ovu klasifikaciju. Ako misliš
+          da druga kategorija bolje opisuje argument → odaberi „Pogrešno”.
+        </p>
+      </div>
+
       {/* Progress bar */}
       <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
         <div
