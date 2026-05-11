@@ -4,6 +4,7 @@ import type {
   AnalysisItemFeedbackUpdate,
   AnalysisItemPublic,
   AnalysisPublic,
+  ClaimType,
   DocumentList,
   DocumentPublic,
   DocumentSetList,
@@ -14,6 +15,9 @@ import type {
   MeResponse,
   ProjectInfo,
   SourcesResponse,
+  SpotcheckBatch,
+  SpotcheckStats,
+  SpotcheckVerdict,
   StartAnalysisResponse,
   TokenPair,
   TroskovnikType,
@@ -300,6 +304,40 @@ export const api = {
 
   async deleteProjectLogo(): Promise<ProjectInfo> {
     return request<ProjectInfo>("/projects/me/logo", { method: "DELETE" });
+  },
+
+  // --- DKOM Spot-check (super-admin only) ---
+
+  async getSpotcheckBatch(size = 50, seed = 42, skipReviewed = true): Promise<SpotcheckBatch> {
+    return request<SpotcheckBatch>(
+      `/admin/dkom-spotcheck/batch?size=${size}&seed=${seed}&skip_reviewed=${skipReviewed}`,
+    );
+  },
+
+  async submitSpotcheckFeedback(
+    claimId: string,
+    verdict: SpotcheckVerdict,
+    correctCategory?: ClaimType,
+  ): Promise<void> {
+    await request("/admin/dkom-spotcheck/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        claim_id: claimId,
+        verdict,
+        correct_category: correctCategory ?? null,
+      }),
+    });
+  },
+
+  async getSpotcheckStats(): Promise<SpotcheckStats> {
+    return request<SpotcheckStats>("/admin/dkom-spotcheck/stats");
+  },
+
+  async deleteSpotcheckFeedback(claimId: string): Promise<void> {
+    await request(`/admin/dkom-spotcheck/feedback/${encodeURIComponent(claimId)}`, {
+      method: "DELETE",
+    });
   },
 };
 

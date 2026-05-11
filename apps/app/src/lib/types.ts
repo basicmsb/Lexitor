@@ -6,7 +6,8 @@ export interface UserPublic {
   full_name: string | null;
   role: UserRole;
   is_active: boolean;
-  project_id: string;
+  is_super_admin: boolean;
+  project_id: string | null;
   created_at: string;
 }
 
@@ -225,4 +226,43 @@ export interface IndexedSource {
 export interface SourcesResponse {
   items: IndexedSource[];
   total: number;
+}
+
+// ---------------------------------------------------------------------------
+// DKOM Spot-check (super-admin only)
+
+export type ClaimType =
+  | "brand_lock" | "kratki_rok" | "vague_kriterij" | "diskrim_uvjeti"
+  | "neprecizna_specifikacija" | "neispravna_grupacija" | "kriterij_odabira"
+  | "ocjena_ponude" | "espd_dokazi" | "jamstvo" | "trosak_postupka" | "ostalo";
+
+export type SpotcheckVerdict = "correct" | "wrong" | "uncertain" | "skip";
+
+export interface ClaimSample {
+  id: string;
+  klasa: string;
+  predmet: string;
+  pdf_filename: string | null;
+  llm_category: ClaimType;
+  dkom_verdict: string;
+  argument_zalitelja: string;
+  obrana_narucitelja: string | null;
+  dkom_obrazlozenje: string;
+  violated_article_claimed: string | null;
+}
+
+export interface SpotcheckBatch {
+  total_claims: number;
+  sample_size: number;
+  seed: number;
+  items: ClaimSample[];
+  already_reviewed_ids: string[];
+}
+
+export interface SpotcheckStats {
+  total_feedback: number;
+  by_verdict: Record<string, number>;
+  accuracy: number | null;
+  by_category_accuracy: Record<string, { correct: number; wrong: number; accuracy: number }>;
+  miscls: { llm_said: string; correct: string; count: number }[];
 }

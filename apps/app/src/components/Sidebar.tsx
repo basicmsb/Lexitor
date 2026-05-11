@@ -19,6 +19,10 @@ const navigation = [
   { href: "/postavke", label: "Postavke" },
 ] as const;
 
+const adminNavigation = [
+  { href: "/admin/dkom-spotcheck", label: "DKOM spot-check" },
+] as const;
+
 export function Sidebar() {
   const pathname = usePathname();
   const { me, logout } = useAuth();
@@ -34,7 +38,7 @@ export function Sidebar() {
         )}
       </div>
 
-      <nav className="p-3 flex-1">
+      <nav className="p-3 flex-1 overflow-y-auto">
         <ul className="space-y-1">
           {navigation.map((item) => {
             const active = pathname?.startsWith(item.href);
@@ -54,6 +58,33 @@ export function Sidebar() {
             );
           })}
         </ul>
+
+        {me?.user.is_super_admin && (
+          <>
+            <div className="text-[10px] uppercase tracking-[0.18em] font-semibold text-muted mt-6 mb-2 px-3">
+              Super Admin
+            </div>
+            <ul className="space-y-1">
+              {adminNavigation.map((item) => {
+                const active = pathname?.startsWith(item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={`block px-3 py-2 rounded-md text-sm transition ${
+                        active
+                          ? "bg-gold/10 text-gold font-medium"
+                          : "text-navy hover:bg-surface-2 hover:text-ink"
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
       </nav>
 
       <div className="p-3 border-t border-brand-border space-y-2">

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
+from src.api.routes import admin_spotcheck as admin_spotcheck_routes
 from src.api.routes import analyses as analyses_routes
 from src.api.routes import auth as auth_routes
 from src.api.routes import documents as documents_routes
@@ -62,6 +63,7 @@ app.include_router(analyses_routes.router)
 app.include_router(knowledge_routes.router)
 app.include_router(projects_routes.router)
 app.include_router(labels_routes.router)
+app.include_router(admin_spotcheck_routes.router)
 
 
 @app.get("/health", tags=["health"])

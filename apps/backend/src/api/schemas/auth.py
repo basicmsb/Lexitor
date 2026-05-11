@@ -38,7 +38,8 @@ class UserPublic(BaseModel):
     full_name: str | None
     role: UserRole
     is_active: bool
-    project_id: uuid.UUID
+    is_super_admin: bool = False
+    project_id: uuid.UUID | None = None
     created_at: datetime
 
 
@@ -53,4 +54,4 @@ class ProjectPublic(BaseModel):
 
 class MeResponse(BaseModel):
     user: UserPublic
-    project: ProjectPublic
+    project: ProjectPublic | None = None
