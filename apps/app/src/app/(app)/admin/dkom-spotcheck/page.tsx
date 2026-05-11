@@ -141,7 +141,7 @@ export default function DkomSpotcheckPage() {
       // Ne aktiviraj shortcut-e ako je fokus na input/select elementu
       const target = e.target as HTMLElement;
       if (target?.tagName === "SELECT" || target?.tagName === "INPUT") return;
-      if (e.key === "Enter" || e.key === "y" || e.key === "Y") submitConfirm();
+      if (e.key === "y" || e.key === "Y") submitConfirm();
       else if (e.key === "?" || e.key === "u" || e.key === "U") void submitVerdict("uncertain");
       else if (e.key === "s" || e.key === "S" || e.key === "Escape")
         void submitVerdict("skip");
@@ -394,7 +394,7 @@ export default function DkomSpotcheckPage() {
               ? "✓ Potvrdi promjenu"
               : "✓ Točno"}
           </span>
-          <span className="text-[10px] opacity-70">[Y] / [Enter]</span>
+          <span className="text-[10px] opacity-70">[Y]</span>
         </button>
         <button
           type="button"
