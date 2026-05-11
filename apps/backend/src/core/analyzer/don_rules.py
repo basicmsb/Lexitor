@@ -151,3 +151,209 @@ don_rule(
         "ZJN čl. 207 traži neutralnost tehničke specifikacije."
     ),
 )(_brand_lock_impl)
+
+
+# ---------------------------------------------------------------------------
+# neprecizna_specifikacija — najveća kategorija u DKOM dataset-u (453 pojave,
+# 48% uvazen rate). Deterministic detekcija ovdje hvata očite case-ove;
+# suptilniji slučajevi će ići kroz LLM judge (Faza D).
+
+import re  # noqa: E402
+
+# Uska tolerancija — ±N% gdje je N <= 10
+_NARROW_TOLERANCE_RE = re.compile(
+    r"[±+\-]\s*(\d+(?:[.,]\d+)?)\s*%",
+)
+
+# Spomen specifične norme (ISO/EN/HRN/IEC + broj) BEZ "ili jednakovrijedno"
+_NORM_REFERENCE_RE = re.compile(
+    r"\b(ISO|EN|HRN|IEC|DIN|ASTM|ATEX)\s*"
+    r"(?:EN\s*)?"  # može biti i "EN HRN EN" kombinacije
+    r"\d{4,5}(?:[-:]\d+)?(?:\s*-?\s*\d{4})?",
+    re.IGNORECASE,
+)
+
+# Riječi koje impliciraju ekskluzivnost (sume signala)
+_EXCLUSIVE_TERMS = (
+    # Eksplicitno "isključiv*"
+    "isključiv",
+    # Samo + bilo što (samo jedan, samo jedna, samo vodomjeri, samo proizvod)
+    "samo jedan", "samo jedno", "samo jedna", "samo proizvod",
+    "udovoljava samo", "omogućava samo", "omogucava samo", "omogućuje samo",
+    "ispunjava samo", "udovoljiti samo",
+    # Jedinstvenost
+    "jedinog", "jedinstven", "jedinstvenog", "jedinstvenu",
+    # Negacije
+    "nijedan drugi", "ne postoji drugi", "ne postoji druga",
+    "niti jedan drugi", "niti jedan", "ostali ne mogu",
+    # Pogoduje
+    "pogoduje isključivo", "pogoduje samo", "pogoduje jednom",
+    # Nerealno / preuski
+    "nerealan zahtjev", "neopravdano usk", "neopravdana sužav",
+    "preuski", "preusko", "preuska",
+    # Zatvaranje tržišta
+    "ograničava tržišn", "sužava krug", "zatvara tržišt",
+)
+
+# Specifične fiksne dimenzije: AxBxC mm ili AxB mm (sumnjive ako su točne)
+_FIXED_DIMENSIONS_RE = re.compile(
+    r"\b\d{2,4}\s*[xX×]\s*\d{2,4}(?:\s*[xX×]\s*\d{2,4})?\s*mm\b",
+)
+
+# Vrlo specifična masa u kg s decimalom (npr. "7,8 kg" ili "7.8 kg")
+_PRECISE_MASS_RE = re.compile(
+    r"\b\d+[,.]\d+\s*kg\b",
+)
+
+
+def _check_narrow_tolerance(text: str) -> tuple[int, list[str]]:
+    """Vrati (signal_count, primjeri) za uske tolerancije."""
+    matches = []
+    for m in _NARROW_TOLERANCE_RE.finditer(text):
+        try:
+            value = float(m.group(1).replace(",", "."))
+            if value <= 10:
+                matches.append(m.group(0))
+        except ValueError:
+            continue
+    return len(matches), matches
+
+
+def _check_norm_without_equivalent(text: str) -> tuple[int, list[str]]:
+    """Vrati (signal_count, primjeri) za citate normi bez 'ili jednakovrijedno'."""
+    text_lower = text.lower()
+    if "jednakovrijed" in text_lower:
+        return 0, []  # ima fallback klauzulu
+    matches = [m.group(0) for m in _NORM_REFERENCE_RE.finditer(text)]
+    return len(matches), matches[:3]
+
+
+def _check_exclusive_terms(text: str) -> tuple[int, list[str]]:
+    """Vrati (signal_count, primjeri) za ekskluzivne izraze."""
+    text_lower = text.lower()
+    hits = [term for term in _EXCLUSIVE_TERMS if term in text_lower]
+    return len(hits), hits
+
+
+def _check_fixed_dimensions(text: str) -> tuple[int, list[str]]:
+    """Fiksne dimenzije BEZ tolerancije — vrlo specifične = sumnja."""
+    dims = [m.group(0) for m in _FIXED_DIMENSIONS_RE.finditer(text)]
+    if not dims:
+        return 0, []
+    # Ako u tekstu već ima ±N% tolerancije, dimenzije su vjerojatno OK
+    if "±" in text or "+/-" in text.lower() or "tolerancij" in text.lower():
+        return 0, []
+    return len(dims), dims[:3]
+
+
+def _neprecizna_specifikacija_impl(item: ParsedItem) -> list[Finding]:
+    """Detektira tehničke specifikacije koje pogoduju jednom proizvođaču.
+
+    Strategija: skupi signale (uska tolerancija, citat norme bez 'ili
+    jednakovrijedno', ekskluzivni izrazi, fiksne dimenzije). 2+ signala
+    = WARN, 3+ = FAIL (jaka indikacija). 1 signal nije dovoljan — može
+    biti opravdano.
+
+    DKOM citation per case (ZJN čl. 207, 209, 210, 280, 290) ide kroz
+    `_enrich_findings_with_citations` u mock.py."""
+    from src.api.schemas.analysis import AnalysisItemStatus
+
+    text = item.text or ""
+    if len(text) < 50:
+        return []
+
+    # Skupi sve signale
+    signals = []  # list of (signal_type, count, examples)
+
+    n, ex = _check_narrow_tolerance(text)
+    if n > 0:
+        signals.append(("uska_tolerancija", n, ex))
+
+    n, ex = _check_norm_without_equivalent(text)
+    if n > 0:
+        # 2+ distinktnih normi bez jednakovrijedno = jaka indikacija (broji se
+        # kao 2 signala umjesto 1)
+        signals.append(("norma_bez_jednakovrijedno", n, ex))
+        if n >= 2:
+            signals.append(("multiple_norms", n, ex))
+
+    n, ex = _check_exclusive_terms(text)
+    if n > 0:
+        signals.append(("ekskluzivni_izraz", n, ex))
+        # 2+ ekskluzivnih izraza također jaka indikacija
+        if n >= 2:
+            signals.append(("multiple_exclusive", n, ex))
+
+    n, ex = _check_fixed_dimensions(text)
+    if n > 0:
+        signals.append(("fiksne_dimenzije", n, ex))
+
+    # 2+ signala = problem. 1 signal = vjerojatno OK.
+    if len(signals) < 2:
+        return []
+
+    # Status: FAIL ako 3+ signala (jaka indikacija), inače WARN
+    status = (
+        AnalysisItemStatus.FAIL.value if len(signals) >= 3
+        else AnalysisItemStatus.WARN.value
+    )
+
+    # Build explanation
+    signal_labels = {
+        "uska_tolerancija": "uska tolerancija",
+        "norma_bez_jednakovrijedno": "specifična norma bez „ili jednakovrijedno”",
+        "multiple_norms": "više normi bez „ili jednakovrijedno”",
+        "ekskluzivni_izraz": "ekskluzivni izraz",
+        "multiple_exclusive": "više ekskluzivnih izraza",
+        "fiksne_dimenzije": "fiksne dimenzije bez raspona",
+    }
+    # Dedupliciraj signal-e istog tipa za prikaz (multiple_* ne mora biti
+    # zaseban red u explanation-u)
+    detail_parts = []
+    seen_types = set()
+    for sig_type, count, examples in signals:
+        if sig_type.startswith("multiple_"):
+            continue  # multiple_* je samo za scoring, ne za prikaz
+        if sig_type in seen_types:
+            continue
+        seen_types.add(sig_type)
+        label = signal_labels.get(sig_type, sig_type)
+        ex_str = ", ".join(f"„{e}”" for e in examples[:2])
+        detail_parts.append(f"• {label}: {ex_str}")
+
+    explanation = (
+        f"Specifikacija sadrži {len(signals)} signala koji upućuju na "
+        f"mogući opis prilagođen jednom proizvođaču:\n"
+        + "\n".join(detail_parts)
+        + "\n\nZJN čl. 280 st. 4 i čl. 290 st. 1: tehničke specifikacije moraju "
+        "biti dovoljno precizne da ponuditeljima omoguće utvrđivanje predmeta "
+        "nabave, a istovremeno ne smiju neopravdano sužavati tržišnu utakmicu."
+    )
+    suggestion = (
+        "Razmotri proširenje tolerancije, dopuni klauzulu „ili jednakovrijedno” "
+        "uz norme, ili specificiraj kriterije objektivne usporedbe ako je "
+        "ograničenje tehnički nužno."
+    )
+
+    return [
+        {
+            "kind": "neprecizna_specifikacija",
+            "status": status,
+            "explanation": explanation,
+            "suggestion": suggestion,
+            "is_mock": False,
+            "citations": [],  # _enrich_findings_with_citations će dodati DKOM presedan
+        }
+    ]
+
+
+don_rule(
+    name="neprecizna_specifikacija",
+    applies_to=("paragraph", "requirement", "list", "table"),
+    description=(
+        "Tehnička specifikacija je preuska i pogoduje jednom proizvođaču. "
+        "Detektira: uske tolerancije (±N% za N≤10), specifične norme bez "
+        "„ili jednakovrijedno”, ekskluzivne izraze, fiksne dimenzije. "
+        "ZJN čl. 280 st. 4 i čl. 290 st. 1."
+    ),
+)(_neprecizna_specifikacija_impl)

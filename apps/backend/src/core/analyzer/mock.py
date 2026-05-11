@@ -342,11 +342,11 @@ async def _enrich_findings_with_citations(
     # korespondencija). None → fallback bez filtera.
     KIND_TO_CLAIM_TYPE = {
         "brand_lock": "brand_lock",
+        "neprecizna_specifikacija": "neprecizna_specifikacija",
         # Buduća pravila:
         # "kratki_rok": "kratki_rok",
         # "vague_kriterij": "vague_kriterij",
         # "diskrim_uvjeti": "diskrim_uvjeti",
-        # "neprecizna_spec": "neprecizna_specifikacija",
     }
 
     # Cache po claim_type — više finding-a istog tipa dijeli citaciju
