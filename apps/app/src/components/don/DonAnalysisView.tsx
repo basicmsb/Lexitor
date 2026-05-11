@@ -134,9 +134,13 @@ export function DonAnalysisView({
 
   const items = stream.items.length > 0 ? stream.items : historicalItems;
 
-  const { chapters, blocksByChapter } = useMemo(() => {
+  // Linearan prikaz svih blokova (po redu pojavljivanja u dokumentu).
+  // Section_header-i su izvučeni kao "anchor markeri" — prikazuju se kao
+  // naslov između blokova i imaju ID za scroll-to navigaciju.
+  const { chapters, allBlocks } = useMemo(() => {
     const chMap = new Map<string, ChapterNode>();
-    const bMap = new Map<string, AnalysisItemPublic[]>();
+    // Skupljanje blokova: NE filtriramo po chapter, samo bilježimo redoslijed
+    const blocks: AnalysisItemPublic[] = [];
     items.forEach((it, idx) => {
       const path = getChapterPath(it);
       const key = chapterKey(path);
@@ -151,23 +155,26 @@ export function DonAnalysisView({
           blockCount: 0,
           issueCount: 0,
         });
-        bMap.set(key, []);
       }
       const ch = chMap.get(key)!;
-      const arr = bMap.get(key)!;
       const kind = getKind(it);
       if (kind !== "section_header") {
-        arr.push(it);
+        blocks.push(it);
         ch.blockCount += 1;
         if (it.status === "warn" || it.status === "fail") {
           ch.issueCount += 1;
         }
       }
     });
-    const sorted = Array.from(chMap.values()).sort(
+    const allChapters = Array.from(chMap.values()).sort(
       (a, b) => a.startIndex - b.startIndex,
     );
-    return { chapters: sorted, blocksByChapter: bMap };
+    // Sakrij chapter-e bez sadržajnih blokova — preg-headeri tipa
+    // "A. OPĆI DIO" → "1. OPĆA DOKUMENTACIJA" → "1.1 OPĆA DOKUMENTACIJA"
+    // gdje samo najdublji nivo sadrži stvarni tekst. UX svrha: TOC pokazuje
+    // poglavlja koja STVARNO sadrže analizirane blokove.
+    const sorted = allChapters.filter((c) => c.blockCount > 0);
+    return { chapters: sorted, allBlocks: blocks };
   }, [items]);
 
   useEffect(() => {
@@ -177,10 +184,50 @@ export function DonAnalysisView({
     }
   }, [chapters, activeChapter]);
 
-  const visibleBlocks = useMemo(() => {
-    if (!activeChapter) return [];
-    return blocksByChapter.get(activeChapter) ?? [];
-  }, [activeChapter, blocksByChapter]);
+  // Track block-to-chapter mapping za scroll detection
+  const blockChapterMap = useMemo(() => {
+    const m = new Map<string, string>();
+    allBlocks.forEach((b) => {
+      const path = getChapterPath(b);
+      m.set(b.id, chapterKey(path));
+    });
+    return m;
+  }, [allBlocks]);
+
+  // Scroll-spy: prati koji chapter je trenutno u viewport-u i highlight TOC.
+  // Koristi IntersectionObserver na svaki blok (data-chapter atribut).
+  useEffect(() => {
+    if (allBlocks.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Uzmi prvi vidljiv blok (top-most)
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          const ch = visible[0].target.getAttribute("data-chapter");
+          if (ch) setActiveChapter(ch);
+        }
+      },
+      { rootMargin: "-20% 0px -60% 0px" }, // active when top 20-40% of viewport
+    );
+    const els = window.document.querySelectorAll("[data-block-id]");
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [allBlocks]);
+
+  const scrollToChapter = useCallback((chapterKey: string) => {
+    // Pronađi prvi blok s ovim chapter-om
+    const firstBlock = allBlocks.find(
+      (b) => blockChapterMap.get(b.id) === chapterKey,
+    );
+    if (!firstBlock) return;
+    const el = window.document.querySelector(
+      `[data-block-id="${firstBlock.id}"]`,
+    );
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveChapter(chapterKey);
+  }, [allBlocks, blockChapterMap]);
 
   const summary = useMemo(() => {
     let ok = 0, warn = 0, fail = 0, neutral = 0;
@@ -319,7 +366,7 @@ export function DonAnalysisView({
                 <li key={ch.key}>
                   <button
                     type="button"
-                    onClick={() => setActiveChapter(ch.key)}
+                    onClick={() => scrollToChapter(ch.key)}
                     className={`w-full text-left px-2 py-1.5 rounded text-sm transition ${indent} ${
                       isActive ? "bg-ink/5 text-ink font-medium" : "text-navy hover:bg-surface-2"
                     }`}
@@ -349,21 +396,25 @@ export function DonAnalysisView({
           </ul>
         </aside>
 
-        <main className="md:col-span-9 min-h-0 h-full overflow-y-auto pr-2 space-y-3">
-          {visibleBlocks.length === 0 ? (
+        <main className="md:col-span-9 min-h-0 h-full overflow-y-auto pr-2 space-y-3 scroll-smooth">
+          {allBlocks.length === 0 ? (
             <p className="text-sm text-muted italic">
-              Nema blokova u ovom poglavlju.
+              Nema analiziranih blokova u dokumentu.
             </p>
           ) : (
-            visibleBlocks.map((block) => {
+            allBlocks.map((block) => {
               const status = block.status || "neutral";
               const accent = STATUS_COLORS[status] || "#D5D2C7";
               const kind = getKind(block);
               const rb = getRb(block);
+              const chapterPath = getChapterPath(block);
+              const chKey = chapterKey(chapterPath);
               return (
                 <div
                   key={block.id}
-                  className="flex flex-col md:flex-row gap-4 md:items-stretch"
+                  data-block-id={block.id}
+                  data-chapter={chKey}
+                  className="flex flex-col md:flex-row gap-4 md:items-stretch scroll-mt-4"
                 >
                   <article
                     className="md:flex-[2] rounded-lg border border-brand-border bg-surface-2 p-5 border-l-4"
