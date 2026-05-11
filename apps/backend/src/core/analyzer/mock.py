@@ -75,12 +75,18 @@ def _pick_status() -> AnalysisItemStatus:
     return AnalysisItemStatus.OK
 
 
-def _load_brands_from_json() -> tuple[str, ...]:
+def _load_brands_from_json() -> tuple[list[dict[str, Any]], tuple[str, ...]]:
     """Učitaj brand listu iz `data/brands.json` (kurirano ručno).
 
     Korisnik dodaje nove brandove samo u JSON — bez code release-a.
-    Vraća tuple imena brand-ova; redoslijed je iz JSON-a (zadržava
-    semantičku grupiranost po kategorijama)."""
+    Vraća (puna lista dict-eva, tuple samo imena).
+
+    Brand dict podržava optional polja:
+    - `context_keywords`: lista riječi koje moraju biti u istom paragrafu
+      za flag (npr. Pilot + olovka/marker). Ako prazno → uvijek flag.
+    - `anti_keywords`: lista riječi koje, ako se pojave, sprječavaju flag
+      (npr. Pilot + "projekt" → nije brand_lock).
+    """
     import json
     from pathlib import Path
     candidates = [
@@ -92,26 +98,67 @@ def _load_brands_from_json() -> tuple[str, ...]:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 brands = data.get("brands") or []
-                names = tuple(b["name"] for b in brands if isinstance(b, dict) and b.get("name"))
+                # Filter samo valid entries s `name`
+                brands = [b for b in brands if isinstance(b, dict) and b.get("name")]
+                names = tuple(b["name"] for b in brands)
                 if names:
                     logger.info("Učitano %d brandova iz %s", len(names), path)
-                    return names
+                    return brands, names
             except Exception:
                 logger.exception("Neuspjelo čitanje brands.json — nastavljam s hardkodiranom listom")
-    # Fallback ako data/brands.json ne postoji ili je prazan
-    return (
-        "Daikin", "Mitsubishi", "Geberit", "Grohe", "Hansgrohe",
-        "Knauf", "Sika", "Mapei", "Ytong", "Baumit", "Velux",
-        "Hilti", "Schneider", "Siemens", "ABB", "Hager", "Legrand",
-        "JUB", "Caparol", "Bosch",
-    )
+    # Fallback
+    fallback = [
+        {"name": n} for n in (
+            "Daikin", "Mitsubishi", "Geberit", "Grohe", "Hansgrohe",
+            "Knauf", "Sika", "Mapei", "Ytong", "Baumit", "Velux",
+            "Hilti", "Schneider", "Siemens", "ABB", "Hager", "Legrand",
+            "JUB", "Caparol", "Bosch",
+        )
+    ]
+    return fallback, tuple(b["name"] for b in fallback)
 
 
-_BRANDS = _load_brands_from_json()
+_BRANDS_DATA, _BRANDS = _load_brands_from_json()
 _BRAND_RE = re.compile(
     r"\b(" + "|".join(re.escape(b) for b in _BRANDS) + r")\b",
     re.IGNORECASE,
 )
+
+# Lookup table: brand_name (lower) → {context_keywords, anti_keywords}
+# Brand-ovi BEZ context_keywords nemaju ulaz ovdje — `_check_brand_context`
+# ih tretira kao bezuvjetno flag-ane.
+_BRAND_CONTEXT: dict[str, dict[str, list[str]]] = {
+    b["name"].lower(): {
+        "context_keywords": [k.lower() for k in (b.get("context_keywords") or [])],
+        "anti_keywords": [k.lower() for k in (b.get("anti_keywords") or [])],
+    }
+    for b in _BRANDS_DATA
+    if b.get("context_keywords") or b.get("anti_keywords")
+}
+
+
+def _check_brand_context(brand_name: str, full_text: str) -> bool:
+    """Provjeri je li brand_name u 'pravom kontekstu' (brand mention) ili
+    u nekom drugom (npr. 'pilot projekt'). Vraća True ako treba flag-irati.
+
+    Logika:
+    - Brand nije u _BRAND_CONTEXT (nema kontekstnih ograničenja) → flag (default)
+    - Ima anti_keyword u tekstu → NE flag
+    - Ima context_keywords definirane → flag SAMO ako bar jedan present u tekstu
+    """
+    ctx = _BRAND_CONTEXT.get(brand_name.lower())
+    if not ctx:
+        return True  # bezuvjetni brand
+    text_lower = full_text.lower()
+    # Anti-keyword check je strožiji — sprječava flag iako brand stoji u tekstu
+    for anti in ctx.get("anti_keywords", []):
+        if anti in text_lower:
+            return False
+    # Context-keyword check — ako su definirane, mora biti barem jedan
+    context_kws = ctx.get("context_keywords", [])
+    if context_kws:
+        return any(kw in text_lower for kw in context_kws)
+    return True
 # Phrases that signal brand-locked specifications even without naming
 # the brand directly — analyzer flags the surrounding context.
 _PHRASE_RE = re.compile(
@@ -383,13 +430,19 @@ def _detect_brand_mentions(item_text: str) -> tuple[str, str] | None:
     suggestion). Returns None when there's no brand signal or when
     "ili jednakovrijedno" already accompanies it.
 
-    Used to flag brand mentions inside opci_uvjeti rows where stavka-style
-    random mock doesn't apply but real brand-locking can still happen."""
+    Kontekstualna detekcija: ako brand ima `context_keywords` definirane
+    u brands.json (npr. Pilot za olovke), mora biti barem jedan u tekstu
+    da bi se flagao. Ako ima `anti_keywords` (Pilot + 'projekt'), flag
+    se preskače."""
     if not item_text:
         return None
     found: list[str] = []
     for m in _BRAND_RE.finditer(item_text):
         name = m.group(0)
+        # Kontekstualna provjera — neki brand-ovi (Pilot, Sigma, LUG) imaju
+        # context/anti keyword pravila u brands.json
+        if not _check_brand_context(name, item_text):
+            continue
         if name and name not in found:
             found.append(name)
     for m in _PHRASE_RE.finditer(item_text):
