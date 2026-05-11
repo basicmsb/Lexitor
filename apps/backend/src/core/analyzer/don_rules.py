@@ -357,3 +357,177 @@ don_rule(
         "ZJN čl. 280 st. 4 i čl. 290 st. 1."
     ),
 )(_neprecizna_specifikacija_impl)
+
+
+# ---------------------------------------------------------------------------
+# kratki_rok — 13 pojava u dataset-u (manja kategorija, ali deterministic).
+# ZJN čl. 219-220: minimum 30 dana za otvoreni postupak (nadvrijednosni),
+# 15 dana za skraćeni. Lexitor je strogi — sve < 15 dana flagga.
+
+_DEADLINE_DAYS_RE = re.compile(
+    r"\brok(?:u|om)?\s+(?:od|za)\s+(\d{1,3})\s+dan",
+    re.IGNORECASE,
+)
+
+_DOSTAVA_CONTEXT_RE = re.compile(
+    r"\b(?:dostav|podnoš|preda[jt][ie]|nudit[ie]|ponud[ae])\b",
+    re.IGNORECASE,
+)
+
+_SHORT_DEADLINE_TERMS = (
+    "kratko vrijem",
+    "kratak rok",
+    "kratki period",
+    "kraći period",
+    "kraći rok",
+    "skraćeni period",
+    "neopravdano kratak",
+    "neopravdano kratko",
+    "minimalni zakonski rok",
+    "minimalni rok",
+    "nedovoljno vremena",
+    "tehnički nemoguć",
+    "tehnicki nemoguc",
+    "ne stiže se",
+    "ne stiže",
+    "ne stize",
+    "preostalom roku",
+    "preostalo vrijem",
+    "preostali rok",
+    "prekratak rok",
+    "prekratko vrijem",
+    "kako bi ostavio",
+    "kako bi sprijeci",
+    "kako bi onemogući",
+    "kako bi onemogu",
+    "namjerno kratak",
+    "namjerno kratko",
+)
+
+_NO_EXTENSION_TERMS = (
+    "nije odredio novi rok",
+    "nije produljio rok",
+    "nije produžio rok",
+    "nije produzio rok",
+    "izmjena bez produljen",
+    "izmjena bez produzen",
+    "bez produljenja roka",
+    "bez produženja roka",
+    "bez produzenja roka",
+)
+
+
+def _kratki_rok_impl(item: ParsedItem) -> list[Finding]:
+    """Detektira premali rok za dostavu ponude.
+
+    Strategija:
+    - Eksplicitan broj dana < 15 → WARN (ispod ZJN čl. 219 minimuma)
+    - Eksplicitan broj dana < 7 → FAIL (sigurno krši svaki minimum)
+    - 2+ signala suspicious context → WARN
+    """
+    from src.api.schemas.analysis import AnalysisItemStatus
+
+    text = item.text or ""
+    if len(text) < 30:
+        return []
+
+    text_lower = text.lower()
+
+    signals: list[tuple[str, str]] = []  # (signal_type, detail)
+
+    # 1. Eksplicitan kratki rok (broj dana)
+    explicit_short_days: int | None = None
+    for m in _DEADLINE_DAYS_RE.finditer(text):
+        try:
+            days = int(m.group(1))
+        except ValueError:
+            continue
+        # Provjeri kontekst: blizak referenciji "dostav*", "podnoš*", "ponud*"
+        match_start = m.start()
+        context_window = text[max(0, match_start - 100):match_start + 100]
+        if not _DOSTAVA_CONTEXT_RE.search(context_window):
+            continue
+        if days < 15:
+            signals.append((
+                "kratak_eksplicitni_rok",
+                f"rok od {days} dana za dostavu ponude",
+            ))
+            if explicit_short_days is None or days < explicit_short_days:
+                explicit_short_days = days
+
+    # 2. Suspicious context terms
+    for term in _SHORT_DEADLINE_TERMS:
+        if term in text_lower:
+            signals.append(("kontekst_kratkog_roka", term))
+
+    # 3. No extension after change
+    for term in _NO_EXTENSION_TERMS:
+        if term in text_lower:
+            signals.append(("bez_produljenja_nakon_izmjene", term))
+
+    if not signals:
+        return []
+
+    # Status logika:
+    # - eksplicitni < 7 dana → FAIL
+    # - eksplicitni < 15 dana → WARN (bez obzira broj drugih signala)
+    # - 2+ signala konteksta → WARN
+    # - 1 signal samo → INFO/neutral (premali signal, vraćamo prazno)
+    if explicit_short_days is not None and explicit_short_days < 7:
+        status = AnalysisItemStatus.FAIL.value
+    elif explicit_short_days is not None and explicit_short_days < 15:
+        status = AnalysisItemStatus.WARN.value
+    elif len(signals) >= 2:
+        status = AnalysisItemStatus.WARN.value
+    else:
+        return []  # 1 signal bez eksplicitnog broja nije dovoljno
+
+    # Build explanation
+    detail_parts = []
+    seen_types = set()
+    for sig_type, detail in signals:
+        if sig_type in seen_types:
+            continue
+        seen_types.add(sig_type)
+        label = {
+            "kratak_eksplicitni_rok": "kratak eksplicitni rok",
+            "kontekst_kratkog_roka": "kontekst kratkog roka",
+            "bez_produljenja_nakon_izmjene": "nije produljen rok nakon izmjena",
+        }.get(sig_type, sig_type)
+        detail_parts.append(f"• {label}: „{detail}”")
+
+    explanation = (
+        "Detektirani signali koji ukazuju na prekratak rok za pripremu "
+        "ponude:\n"
+        + "\n".join(detail_parts)
+        + "\n\nZJN čl. 219 propisuje minimum 30 dana za otvoreni postupak "
+        "(nadvrijednosno) ili 15 dana za skraćeni postupak. Kratki rokovi "
+        "diskriminiraju ponuditelje koji nemaju pre-existing ponudu spremnu."
+    )
+    suggestion = (
+        "Produži rok za dostavu ponude na najmanje 15 dana (skraćeni) odnosno "
+        "30 dana (standard za otvoreni postupak). Ako su učinjene značajne "
+        "izmjene dokumentacije, obvezno odrediti novi (produljeni) rok."
+    )
+
+    return [
+        {
+            "kind": "kratki_rok",
+            "status": status,
+            "explanation": explanation,
+            "suggestion": suggestion,
+            "is_mock": False,
+            "citations": [],  # _enrich_findings_with_citations će dodati DKOM presedan
+        }
+    ]
+
+
+don_rule(
+    name="kratki_rok",
+    applies_to=("paragraph", "requirement", "deadline", "list"),
+    description=(
+        "Rok za dostavu ponude je prekratak. ZJN čl. 219: minimum 30 dana "
+        "otvoreni, 15 dana skraćeni. Detektira eksplicitan broj dana + "
+        "kontekstualne signale (kratko vrijeme, neproduljenje nakon izmjene)."
+    ),
+)(_kratki_rok_impl)

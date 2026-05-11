@@ -343,8 +343,8 @@ async def _enrich_findings_with_citations(
     KIND_TO_CLAIM_TYPE = {
         "brand_lock": "brand_lock",
         "neprecizna_specifikacija": "neprecizna_specifikacija",
+        "kratki_rok": "kratki_rok",
         # Buduća pravila:
-        # "kratki_rok": "kratki_rok",
         # "vague_kriterij": "vague_kriterij",
         # "diskrim_uvjeti": "diskrim_uvjeti",
     }
