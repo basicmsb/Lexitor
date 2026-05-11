@@ -243,6 +243,7 @@ export interface ClaimSample {
   klasa: string;
   predmet: string;
   pdf_filename: string | null;
+  pdf_url: string | null;
   llm_category: ClaimType;
   dkom_verdict: string;
   argument_zalitelja: string;

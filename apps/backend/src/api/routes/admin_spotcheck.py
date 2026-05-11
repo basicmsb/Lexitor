@@ -33,6 +33,29 @@ router = APIRouter(
 # Path-evi — relativno na backend root
 EXTRACTED_DIR = Path("data/02-dkom-odluke/extracted")
 FEEDBACK_PATH = Path("data/02-dkom-odluke/analysis/spotcheck_feedback.jsonl")
+# Scraper sidecar fajlovi (s pdf_url-om) leže pored PDF-ova po godinama
+DKOM_PDF_DIRS = [
+    Path("data/02-dkom-odluke/2024"),
+    Path("data/02-dkom-odluke/2025"),
+    Path("data/02-dkom-odluke/2026"),
+]
+
+
+def _build_pdf_url_lookup() -> dict[str, str]:
+    """Skupi mapping {slug → pdf_url} iz scraper sidecar JSON-a (jedanput pri load-u)."""
+    lookup: dict[str, str] = {}
+    for pdf_dir in DKOM_PDF_DIRS:
+        if not pdf_dir.exists():
+            continue
+        for jp in pdf_dir.glob("*.json"):
+            try:
+                data = json.loads(jp.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            url = data.get("pdf_url")
+            if url:
+                lookup[jp.stem] = url
+    return lookup
 
 
 def _load_all_claims() -> list[dict[str, Any]]:
@@ -40,6 +63,7 @@ def _load_all_claims() -> list[dict[str, Any]]:
     flat: list[dict[str, Any]] = []
     if not EXTRACTED_DIR.exists():
         return flat
+    pdf_urls = _build_pdf_url_lookup()
     for jp in sorted(EXTRACTED_DIR.glob("*.json")):
         if jp.name == "all.jsonl":
             continue
@@ -55,6 +79,7 @@ def _load_all_claims() -> list[dict[str, Any]]:
                 "klasa": klasa,
                 "predmet": predmet,
                 "pdf_filename": f"{jp.stem}.pdf",
+                "pdf_url": pdf_urls.get(jp.stem),
                 "llm_category": c.get("type", "ostalo"),
                 "dkom_verdict": c.get("dkom_verdict", "?"),
                 "argument_zalitelja": c.get("argument_zalitelja", ""),

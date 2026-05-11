@@ -21,6 +21,7 @@ class ClaimSample(BaseModel):
     klasa: str
     predmet: str
     pdf_filename: str | None  # za eventualni link na PDF
+    pdf_url: str | None  # public URL na DKOM PDF (https://pdf.dkom.hr/...)
     llm_category: ClaimType
     dkom_verdict: str
     argument_zalitelja: str

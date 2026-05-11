@@ -31,6 +31,33 @@ const VERDICT_LABEL = (cat: ClaimType): string => {
   return CLAIM_TYPES.find((t) => t.value === cat)?.label ?? cat;
 };
 
+/**
+ * Parsiraj reference na članke ZJN-a iz teksta i vrati segmente (text + link?).
+ * Primjer ulaza: "ZJN 2016 čl. 280 st. 4, čl. 290 st. 1"
+ * Linkamo prepoznate "čl. N" na našu pretragu prakse.
+ */
+function parseArticleRefs(text: string): { text: string; href?: string }[] {
+  // Match "čl. NNN" (sa eventualnim "st. M")
+  const regex = /(čl(?:ank[au]?)?\.?\s*\d+\.?(?:\s*st(?:av(?:ak|ka)?)?\.?\s*\d+\.?)?)/gi;
+  const segments: { text: string; href?: string }[] = [];
+  let lastEnd = 0;
+  for (const match of text.matchAll(regex)) {
+    if (match.index !== undefined && match.index > lastEnd) {
+      segments.push({ text: text.slice(lastEnd, match.index) });
+    }
+    segments.push({
+      text: match[0],
+      href: `/pretraga?q=${encodeURIComponent(`ZJN ${match[0]}`)}`,
+    });
+    lastEnd = (match.index ?? 0) + match[0].length;
+  }
+  if (lastEnd < text.length) {
+    segments.push({ text: text.slice(lastEnd) });
+  }
+  return segments.length ? segments : [{ text }];
+}
+
+
 export default function DkomSpotcheckPage() {
   const { me } = useAuth();
   const [batch, setBatch] = useState<SpotcheckBatch | null>(null);
@@ -39,8 +66,8 @@ export default function DkomSpotcheckPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [stats, setStats] = useState<SpotcheckStats | null>(null);
-  const [showWrongDropdown, setShowWrongDropdown] = useState(false);
   const [batchSize, setBatchSize] = useState(50);
+  const [selectedCategory, setSelectedCategory] = useState<ClaimType | null>(null);
 
   const loadBatch = useCallback(async (size: number) => {
     setLoading(true);
@@ -49,7 +76,7 @@ export default function DkomSpotcheckPage() {
       const data = await api.getSpotcheckBatch(size, 42, true);
       setBatch(data);
       setIndex(0);
-      setShowWrongDropdown(false);
+      setSelectedCategory(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Greška pri dohvatu.");
     } finally {
@@ -80,7 +107,7 @@ export default function DkomSpotcheckPage() {
       setSubmitting(true);
       try {
         await api.submitSpotcheckFeedback(claim.id, verdict, correctCategory);
-        setShowWrongDropdown(false);
+        setSelectedCategory(null);
         if (index + 1 >= batch.items.length) {
           await loadStats();
         } else {
@@ -95,19 +122,33 @@ export default function DkomSpotcheckPage() {
     [batch, index, loadStats],
   );
 
+  // Submit s aktualnim selected category — odlučuje correct/wrong
+  const submitConfirm = useCallback(() => {
+    if (!batch || !batch.items[index]) return;
+    const claim = batch.items[index];
+    const currentCat = selectedCategory ?? claim.llm_category;
+    if (currentCat === claim.llm_category) {
+      void submitVerdict("correct");
+    } else {
+      void submitVerdict("wrong", currentCat);
+    }
+  }, [batch, index, selectedCategory, submitVerdict]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (submitting || !batch || showWrongDropdown) return;
-      if (e.key === "y" || e.key === "Y") void submitVerdict("correct");
-      else if (e.key === "n" || e.key === "N") setShowWrongDropdown(true);
+      if (submitting || !batch) return;
+      // Ne aktiviraj shortcut-e ako je fokus na input/select elementu
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "SELECT" || target?.tagName === "INPUT") return;
+      if (e.key === "Enter" || e.key === "y" || e.key === "Y") submitConfirm();
       else if (e.key === "?" || e.key === "u" || e.key === "U") void submitVerdict("uncertain");
       else if (e.key === "s" || e.key === "S" || e.key === "Escape")
         void submitVerdict("skip");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [submitVerdict, submitting, batch, showWrongDropdown]);
+  }, [submitConfirm, submitVerdict, submitting, batch]);
 
   if (!me) return <p className="text-muted">Učitavam…</p>;
   if (!me.user.is_super_admin) {
@@ -223,17 +264,49 @@ export default function DkomSpotcheckPage() {
       {/* Claim card */}
       <article className="rounded-lg border border-brand-border bg-surface-2 p-6 space-y-4">
         <header className="flex items-start justify-between gap-4 pb-4 border-b border-brand-border">
-          <div>
-            <p className="font-mono text-xs text-muted mb-1">{claim.klasa}</p>
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-xs mb-1">
+              {claim.pdf_url ? (
+                <a
+                  href={claim.pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-signal hover:text-ink hover:underline transition"
+                  title="Otvori DKOM PDF u novom tabu"
+                >
+                  {claim.klasa} ↗
+                </a>
+              ) : (
+                <span className="text-muted">{claim.klasa}</span>
+              )}
+            </p>
             <p className="text-sm text-ink">{claim.predmet}</p>
           </div>
           <div className="text-right shrink-0">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-muted mb-1">
-              LLM kategorija
-            </p>
-            <span className="inline-block px-3 py-1 rounded-full bg-gold/15 text-gold text-sm font-semibold">
-              {VERDICT_LABEL(claim.llm_category)}
-            </span>
+            <label className="block text-[10px] uppercase tracking-[0.18em] text-muted mb-1">
+              Kategorija (klikni za promjenu)
+            </label>
+            <select
+              value={selectedCategory ?? claim.llm_category}
+              onChange={(e) => setSelectedCategory(e.target.value as ClaimType)}
+              disabled={submitting}
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold transition border ${
+                selectedCategory && selectedCategory !== claim.llm_category
+                  ? "bg-status-fail/15 text-status-fail border-status-fail/40"
+                  : "bg-gold/15 text-gold border-gold/30"
+              }`}
+            >
+              {CLAIM_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            {selectedCategory && selectedCategory !== claim.llm_category && (
+              <p className="text-[10px] text-status-fail mt-1">
+                Promijenjeno s „{VERDICT_LABEL(claim.llm_category)}”
+              </p>
+            )}
           </div>
         </header>
 
@@ -282,78 +355,70 @@ export default function DkomSpotcheckPage() {
         {claim.violated_article_claimed && (
           <p className="text-xs text-muted">
             📖 Citirani članak:{" "}
-            <span className="font-mono">{claim.violated_article_claimed}</span>
+            <span className="font-mono">
+              {parseArticleRefs(claim.violated_article_claimed).map((seg, i) =>
+                seg.href ? (
+                  <a
+                    key={i}
+                    href={seg.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-signal hover:text-ink hover:underline transition"
+                    title="Otvori u pretrazi prakse"
+                  >
+                    {seg.text}
+                  </a>
+                ) : (
+                  <span key={i}>{seg.text}</span>
+                ),
+              )}
+            </span>
           </p>
         )}
       </article>
 
-      {/* Verdict buttons */}
-      {!showWrongDropdown ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => void submitVerdict("correct")}
-            className="rounded-md bg-status-ok px-4 py-3 text-surface font-medium hover:bg-status-ok/90 transition disabled:opacity-50"
-          >
-            <span className="block text-sm">✓ Točno</span>
-            <span className="text-[10px] opacity-70">[Y]</span>
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => setShowWrongDropdown(true)}
-            className="rounded-md bg-status-fail px-4 py-3 text-surface font-medium hover:bg-status-fail/90 transition disabled:opacity-50"
-          >
-            <span className="block text-sm">✗ Pogrešno</span>
-            <span className="text-[10px] opacity-70">[N]</span>
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => void submitVerdict("uncertain")}
-            className="rounded-md bg-gold px-4 py-3 text-ink font-medium hover:bg-gold/90 transition disabled:opacity-50"
-          >
-            <span className="block text-sm">? Nesigurno</span>
-            <span className="text-[10px] opacity-70">[U]</span>
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => void submitVerdict("skip")}
-            className="rounded-md border border-brand-border px-4 py-3 text-navy font-medium hover:border-ink transition disabled:opacity-50"
-          >
-            <span className="block text-sm">→ Skip</span>
-            <span className="text-[10px] opacity-70">[S]</span>
-          </button>
-        </div>
-      ) : (
-        <div className="rounded-lg border border-status-fail/30 bg-status-fail/5 p-5">
-          <p className="text-sm font-semibold text-ink mb-3">
-            Koja je prava kategorija?
-          </p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {CLAIM_TYPES.filter((t) => t.value !== claim.llm_category).map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                disabled={submitting}
-                onClick={() => void submitVerdict("wrong", t.value)}
-                className="rounded-md border border-brand-border bg-surface px-3 py-2 text-sm text-navy hover:border-ink hover:bg-surface-2 transition disabled:opacity-50"
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowWrongDropdown(false)}
-            className="mt-4 text-sm text-muted hover:text-ink transition"
-          >
-            ← Natrag
-          </button>
-        </div>
-      )}
+      {/* Verdict buttons — 3 opcije (kategorija je već dropdown) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => submitConfirm()}
+          className={`rounded-md px-4 py-3 font-medium transition disabled:opacity-50 ${
+            selectedCategory && selectedCategory !== claim.llm_category
+              ? "bg-status-fail text-surface hover:bg-status-fail/90"
+              : "bg-status-ok text-surface hover:bg-status-ok/90"
+          }`}
+        >
+          <span className="block text-sm">
+            {selectedCategory && selectedCategory !== claim.llm_category
+              ? "✓ Potvrdi promjenu"
+              : "✓ Točno"}
+          </span>
+          <span className="text-[10px] opacity-70">[Y] / [Enter]</span>
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => void submitVerdict("uncertain")}
+          className="rounded-md bg-gold px-4 py-3 text-ink font-medium hover:bg-gold/90 transition disabled:opacity-50"
+        >
+          <span className="block text-sm">? Nesigurno</span>
+          <span className="text-[10px] opacity-70">[U]</span>
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => void submitVerdict("skip")}
+          className="rounded-md border border-brand-border px-4 py-3 text-navy font-medium hover:border-ink transition disabled:opacity-50"
+        >
+          <span className="block text-sm">→ Skip</span>
+          <span className="text-[10px] opacity-70">[S]</span>
+        </button>
+      </div>
+      <p className="text-xs text-muted text-center">
+        Promijeni kategoriju u dropdown-u gore, pa pritisni „Potvrdi promjenu”.
+        Ili ostavi i pritisni „Točno”.
+      </p>
 
       {stats && stats.total_feedback > 0 && (
         <details className="rounded-lg border border-brand-border bg-surface-2/40 p-4">
