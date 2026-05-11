@@ -122,6 +122,9 @@ export interface FindingCitation {
   snippet?: string | null;
   url?: string | null;
   page?: number | null;
+  verdict?: string | null;
+  verdict_raw?: string | null;
+  confidence?: number | null;
 }
 
 export interface FindingPublic {

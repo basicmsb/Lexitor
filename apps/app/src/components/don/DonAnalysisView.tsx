@@ -460,37 +460,81 @@ function BlockFindings({ findings }: { findings: FindingPublic[] }) {
                 {f.citations.map((c, ci) => {
                   const sourceLabel = (c.source || "OTHER").toUpperCase();
                   const isDkom = sourceLabel === "DKOM";
+                  // Verdict styling — uvazen=zeleno (signal za detekciju),
+                  // odbijen=crveno (anti-pattern), dijelom_uvazen=zlatno
+                  const verdictColor =
+                    c.verdict_raw === "uvazen"
+                      ? "bg-status-ok/15 text-status-ok border-status-ok/30"
+                      : c.verdict_raw === "odbijen"
+                        ? "bg-status-fail/15 text-status-fail border-status-fail/30"
+                        : c.verdict_raw === "djelomicno_uvazen"
+                          ? "bg-gold/15 text-gold border-gold/30"
+                          : "bg-muted/15 text-muted border-muted/30";
                   return (
                     <li
                       key={ci}
                       className="rounded-md border border-brand-border bg-surface-2/40 p-3"
                     >
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <span
-                          className={`inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${
-                            isDkom
-                              ? "bg-signal/15 text-signal"
-                              : "bg-gold/15 text-gold"
-                          }`}
-                        >
-                          {sourceLabel}
-                        </span>
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${
+                              isDkom
+                                ? "bg-signal/15 text-signal"
+                                : "bg-gold/15 text-gold"
+                            }`}
+                          >
+                            {sourceLabel}
+                          </span>
+                          {c.verdict && (
+                            <span
+                              className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border ${verdictColor}`}
+                              title={
+                                c.verdict_raw === "uvazen"
+                                  ? "DKOM uvažio žalbu — signal za detekciju"
+                                  : c.verdict_raw === "odbijen"
+                                    ? "DKOM odbio žalbu — anti-pattern (možda nije problem)"
+                                    : "DKOM djelomično uvažio / ne razmatra"
+                              }
+                            >
+                              {c.verdict}
+                            </span>
+                          )}
+                          {c.confidence != null && (
+                            <span
+                              className="text-[10px] text-muted font-mono"
+                              title={`Semantička sličnost: ${(c.confidence * 100).toFixed(1)}%`}
+                            >
+                              {(c.confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
                         {c.url ? (
                           <a
                             href={c.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs font-mono text-navy hover:text-signal hover:underline transition truncate"
+                            className="text-[10px] font-mono text-navy hover:text-signal hover:underline transition shrink-0"
                             title="Otvori PDF u novom tabu"
                           >
-                            {c.reference} ↗
+                            ↗
+                          </a>
+                        ) : null}
+                      </div>
+                      <p className="text-[11px] font-mono text-navy mb-1">
+                        {c.url ? (
+                          <a
+                            href={c.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-signal hover:underline transition"
+                          >
+                            {c.reference}
                           </a>
                         ) : (
-                          <span className="text-xs font-mono text-navy truncate">
-                            {c.reference}
-                          </span>
+                          c.reference
                         )}
-                      </div>
+                      </p>
                       {c.snippet && (
                         <p className="text-xs text-muted leading-relaxed whitespace-pre-line">
                           {c.snippet}

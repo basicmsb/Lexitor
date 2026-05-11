@@ -35,6 +35,11 @@ class FindingCitation(BaseModel):
     snippet: str | None = None
     url: str | None = None
     page: int | None = None
+    # Optional — populiraju se kad citat dolazi iz dkom_claims search-a
+    # (claim-level RAG). Frontend ih prikazuje strukturirano.
+    verdict: str | None = None  # "uvazen", "odbijen", "dijelom uvazen", …
+    verdict_raw: str | None = None  # raw enum value za styling
+    confidence: float | None = None  # 0-1 similarity score iz Qdrant-a
 
 
 class FindingPublic(BaseModel):

@@ -200,26 +200,29 @@ def _claim_hit_to_citation(hit: Any) -> dict[str, Any]:
 
     Razlika od `_hit_to_citation`: ClaimHit ima strukturirane podatke
     (argument, obrazloženje, verdikt) — koristimo ih da napravimo bogatiji
-    snippet i citaciju s DKOM kontekstom."""
+    snippet i citaciju s DKOM kontekstom. Pohranjuje verdikt i similarity
+    u snippet prefix (UI ih može parsirati i prikazati structured)."""
     klasa = hit.klasa or ""
     snippet_parts = []
     if hit.dkom_obrazlozenje:
-        verdict_marker = (
-            "✓" if hit.dkom_verdict == "uvazen"
-            else "✗" if hit.dkom_verdict == "odbijen"
-            else "≈"
-        )
-        snippet_parts.append(f"{verdict_marker} {hit.dkom_obrazlozenje[:280]}")
+        snippet_parts.append(hit.dkom_obrazlozenje[:300])
     if hit.argument_zalitelja and len(snippet_parts) < 2:
         snippet_parts.append(f"Argument: {hit.argument_zalitelja[:200]}")
     snippet = "\n\n".join(snippet_parts)
     if len(snippet) > 600:
         snippet = snippet[:597] + "…"
 
-    # Reference uključuje verdict + datum za jasniji kontekst
-    reference = klasa
+    # Reference: klasa + datum + verdict tag
+    verdict_label = {
+        "uvazen": "uvazen",
+        "djelomicno_uvazen": "dijelom uvazen",
+        "odbijen": "odbijen",
+        "ne_razmatra": "ne razmatra",
+    }.get(hit.dkom_verdict, hit.dkom_verdict)
+    reference_parts = [klasa]
     if hit.datum_odluke:
-        reference = f"{klasa} ({hit.datum_odluke})"
+        reference_parts.append(hit.datum_odluke)
+    reference = " · ".join(reference_parts)
 
     return {
         "source": CitationSource.DKOM,
@@ -227,6 +230,11 @@ def _claim_hit_to_citation(hit: Any) -> dict[str, Any]:
         "snippet": snippet,
         "url": hit.pdf_url,
         "page": None,
+        # Dodatna metadata za UI (ne perzistira se u Citation modelu ali
+        # ide preko AnalysisItemFindings → frontend bez DB hops-a)
+        "verdict": verdict_label,
+        "verdict_raw": hit.dkom_verdict,
+        "confidence": round(hit.score, 3),  # similarity 0-1
     }
 
 
