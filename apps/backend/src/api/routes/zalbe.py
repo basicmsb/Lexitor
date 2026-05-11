@@ -15,13 +15,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from src.api.deps import CurrentUser
 from src.api.schemas.zalbe import (
     SimilarPrecedent,
     ZalbeAnalyzeRequest,
     ZalbeAnalyzeResponse,
+    ZalbeGenerateRequest,
+    ZalbeGenerateResponse,
     ZalbePrediction,
 )
 
@@ -45,7 +47,7 @@ def _build_vijece_index() -> dict[str, list[dict[str, Any]]]:
             continue
         try:
             data = json.loads(jp.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: S112
             continue
         klasa = data.get("klasa", "?")
         members = [m["ime"] for m in data.get("vijece", [])]
@@ -105,7 +107,7 @@ async def analyze_zalba(
             claim_type=claim_type_filter,
             only_uvazen=False,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Pretraga prakse nije uspjela: {exc}",
@@ -206,3 +208,180 @@ async def analyze_zalba(
         for h in hits
     ]
     return ZalbeAnalyzeResponse(prediction=prediction, similar_precedents=similar)
+
+
+# ---------------------------------------------------------------------------
+# C.3 — LLM nacrt žalbe
+
+_GENERATE_SYSTEM_PROMPT = """Ti si pravni asistent specijaliziran za hrvatsko pravo javne nabave (ZJN 2016, NN 120/16, 114/22). Tvoj zadatak je napisati strukturirani nacrt žalbe DKOM-u (Državna komisija za kontrolu postupaka javne nabave) na temelju korisnikovog argumenta i sličnih DKOM presedana.
+
+KLJUČNE UPUTE:
+
+1. **Format nacrta** — koristi formalnu strukturu hrvatske pravne žalbe:
+   - Zaglavlje: Naručitelj, žalitelj, broj objave EOJN, predmet
+   - Uvod: kratki opis postupka i osnova za žalbu
+   - Žalbeni navod (numerirani): konkretno što se osporava
+     - U svakom navodu: što naručitelj učinio, koji ZJN članak prekršen, zašto je to problem
+   - Pravni temelj: navedeni ZJN članci i DKOM presedani
+   - Zahtjev: što žalitelj traži (poništenje odluke / poništenje DON-a / produljenje roka itd.)
+   - Trošak postupka (ako relevantno): standard naknade
+
+2. **Pravna terminologija** — formalna, precizna:
+   - "Žalitelj", "naručitelj", "ponuditelj", "dokumentacija o nabavi (DON)"
+   - "Žalbeni navod osnovan je iz sljedećih razloga: …"
+   - "Sukladno članku N. stavku M. Zakona o javnoj nabavi (NN 120/16, 114/22)…"
+   - "Slijedom navedenoga, žalitelj predlaže da DKOM…"
+
+3. **Citiranje presedana** — koristi prošle DKOM odluke kao argument:
+   - "DKOM je u odluci klase UP/II-034-02/25-01/N od datuma utvrdio da…"
+   - Citiraj 2-3 najsličnija slučaja gdje je DKOM uvažio sličan argument
+   - Ne izmišljaj klase ili datume — koristi samo one koje su priložene
+
+4. **ZJN članci za najčešće povrede**:
+   - Brand-lock: ZJN čl. 207
+   - Norme bez "ili jednakovrijedno": ZJN čl. 209, 210
+   - Neprecizne specifikacije: ZJN čl. 280 st. 4, čl. 290 st. 1
+   - Kratki rok: ZJN čl. 219-220
+   - Diskriminatorni uvjeti sposobnosti: ZJN čl. 256-272
+   - Načela javne nabave: ZJN čl. 4
+
+5. **Ton i opseg** — pisno, jasno, bez emocionalnog jezika. Nacrt cca 600-1500 riječi.
+
+6. **NE izmišljaj** — ako neki podatak nije naveden u korisnikovom inputu (npr. evidencijski broj nabave), napiši `[…]` umjesto izmišljotine.
+
+Vrati samo tekst nacrta žalbe, bez preambule ili objašnjenja."""
+
+
+@router.post("/generate", response_model=ZalbeGenerateResponse)
+async def generate_zalba(
+    payload: ZalbeGenerateRequest,
+    _user: CurrentUser,
+) -> ZalbeGenerateResponse:
+    """LLM-generirani nacrt žalbe iz korisnikovog argumenta + odabrani presedani.
+
+    Koristi Anthropic Claude (production key, isti kao DKOM extraction).
+    Korisnik može odabrati koje DKOM klase da Lexitor citira; ako ne navede,
+    sustav sam pretražuje slične.
+    """
+    import os
+
+    import anthropic
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LLM nije konfiguriran (ANTHROPIC_API_KEY missing).",
+        )
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+    # 1. Skupi presedane (korisnikov select ili auto-search)
+    from src.knowledge_base import search_claims
+
+    selected_data: list[dict[str, Any]] = []
+    if payload.selected_precedents:
+        # Korisnik već odabrao konkretne klase — učitaj ih iz dataset-a
+        for jp in EXTRACTED_DIR.glob("*.json"):
+            if jp.name == "all.jsonl":
+                continue
+            try:
+                data = json.loads(jp.read_text(encoding="utf-8"))
+            except Exception:  # noqa: S112
+                continue
+            if data.get("klasa") in payload.selected_precedents:
+                selected_data.append(data)
+    else:
+        # Auto-search slično za korisnikov argument
+        try:
+            hits = await search_claims(payload.argument, limit=5)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Pretraga prakse nije uspjela: {exc}",
+            ) from exc
+        for h in hits:
+            selected_data.append({
+                "klasa": h.klasa,
+                "predmet": h.predmet,
+                "datum_odluke": h.datum_odluke,
+                "outcome": h.outcome,
+                "claims": [{
+                    "type": h.claim_type,
+                    "argument_zalitelja": h.argument_zalitelja,
+                    "dkom_obrazlozenje": h.dkom_obrazlozenje,
+                    "violated_article_claimed": h.violated_article_claimed,
+                    "dkom_verdict": h.dkom_verdict,
+                }],
+            })
+
+    # 2. Build prompt user content
+    precedents_text = ""
+    for d in selected_data[:5]:
+        precedents_text += (
+            f"\n--- DKOM odluka {d.get('klasa', '?')} "
+            f"({d.get('datum_odluke', '?')}) ---\n"
+            f"Predmet: {d.get('predmet', '')}\n"
+            f"Ishod: {d.get('outcome', '?')}\n"
+        )
+        for c in d.get("claims", [])[:2]:
+            precedents_text += (
+                f"  Argument: {(c.get('argument_zalitelja') or '')[:300]}\n"
+                f"  DKOM: {(c.get('dkom_obrazlozenje') or '')[:300]}\n"
+                f"  Članak: {c.get('violated_article_claimed') or '?'}\n"
+                f"  Verdikt: {c.get('dkom_verdict', '?')}\n"
+            )
+
+    user_content = (
+        f"Napiši nacrt žalbe DKOM-u za sljedeći slučaj:\n\n"
+        f"PREDMET NABAVE: {payload.predmet}\n"
+        f"NARUČITELJ: {payload.narucitelj}\n"
+        f"BROJ OBJAVE EOJN: {payload.broj_objave_eojn or '[broj objave]'}\n"
+        f"KLASA OSPORAVANE ODLUKE: {payload.klasa_odluke or '[klasa]'}\n\n"
+        f"ARGUMENT ŽALITELJA:\n{payload.argument}\n\n"
+        f"SLIČNI DKOM PRESEDANI ZA REFERENCU:\n{precedents_text}"
+    )
+
+    # 3. Call Claude
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=[
+                {
+                    "type": "text",
+                    "text": _GENERATE_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_content}],
+        )
+    except anthropic.APIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM zahtjev nije uspio: {exc}",
+        ) from exc
+
+    nacrt = "".join(b.text for b in msg.content if hasattr(b, "text"))
+    if not nacrt:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LLM nije vratio sadržaj.",
+        )
+
+    # 4. Extract cited precedents and ZJN articles iz teksta nacrta (best-effort)
+    cited_precedents = list(set(
+        re.findall(r"UP/II-\d{3}-\d{2}/\d{2}-\d{2}/\d+", nacrt)
+    ))
+    cited_zjn = list(set(
+        re.findall(r"(?:čl(?:ank[au]?)?\.?\s*)(\d{1,3})", nacrt, re.IGNORECASE)
+    ))
+
+    return ZalbeGenerateResponse(
+        nacrt_text=nacrt.strip(),
+        word_count=len(nacrt.split()),
+        cited_precedents=cited_precedents,
+        cited_zjn_articles=cited_zjn,
+    )

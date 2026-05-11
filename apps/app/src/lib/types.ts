@@ -315,3 +315,19 @@ export interface ZalbeAnalyzeResponse {
   prediction: ZalbePrediction;
   similar_precedents: SimilarPrecedent[];
 }
+
+export interface ZalbeGenerateRequest {
+  argument: string;
+  predmet: string;
+  narucitelj: string;
+  broj_objave_eojn?: string;
+  klasa_odluke?: string;
+  selected_precedents?: string[];
+}
+
+export interface ZalbeGenerateResponse {
+  nacrt_text: string;
+  word_count: number;
+  cited_precedents: string[];
+  cited_zjn_articles: string[];
+}

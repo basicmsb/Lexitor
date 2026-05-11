@@ -24,6 +24,8 @@ import type {
   UserAddedFindingCreate,
   ZalbeAnalyzeRequest,
   ZalbeAnalyzeResponse,
+  ZalbeGenerateRequest,
+  ZalbeGenerateResponse,
 } from "@/lib/types";
 
 export const API_BASE_URL =
@@ -346,6 +348,14 @@ export const api = {
 
   async analyzeZalba(payload: ZalbeAnalyzeRequest): Promise<ZalbeAnalyzeResponse> {
     return request<ZalbeAnalyzeResponse>("/zalbe/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async generateZalba(payload: ZalbeGenerateRequest): Promise<ZalbeGenerateResponse> {
+    return request<ZalbeGenerateResponse>("/zalbe/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

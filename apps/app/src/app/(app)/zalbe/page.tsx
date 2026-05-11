@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 
 import { api } from "@/lib/api";
 import type {
-  ClaimType,
   SimilarPrecedent,
   ZalbeAnalyzeResponse,
   ZalbeClaimType,
+  ZalbeGenerateResponse,
 } from "@/lib/types";
 
 const CLAIM_TYPE_LABELS: Record<string, string> = {
@@ -41,6 +41,16 @@ export default function ZalbePage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ZalbeAnalyzeResponse | null>(null);
 
+  // C.3 — generacija nacrta
+  const [selectedKlase, setSelectedKlase] = useState<Set<string>>(new Set());
+  const [predmet, setPredmet] = useState("");
+  const [narucitelj, setNarucitelj] = useState("");
+  const [brojObjave, setBrojObjave] = useState("");
+  const [klasaOdluke, setKlasaOdluke] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [nacrt, setNacrt] = useState<ZalbeGenerateResponse | null>(null);
+
   const onSubmit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
     if (argument.trim().length < 20) {
@@ -50,6 +60,8 @@ export default function ZalbePage() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setNacrt(null);
+    setSelectedKlase(new Set());
     try {
       const members = vijeceText
         .split(/[,;\n]/)
@@ -68,6 +80,44 @@ export default function ZalbePage() {
       setLoading(false);
     }
   }, [argument, claimType, vijeceText]);
+
+  const toggleKlasa = useCallback((klasa: string) => {
+    setSelectedKlase((prev) => {
+      const next = new Set(prev);
+      if (next.has(klasa)) {
+        next.delete(klasa);
+      } else {
+        next.add(klasa);
+      }
+      return next;
+    });
+  }, []);
+
+  const onGenerate = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+    if (!predmet.trim() || !narucitelj.trim()) {
+      setGenError("Predmet nabave i naručitelj su obavezni.");
+      return;
+    }
+    setGenerating(true);
+    setGenError(null);
+    setNacrt(null);
+    try {
+      const res = await api.generateZalba({
+        argument,
+        predmet: predmet.trim(),
+        narucitelj: narucitelj.trim(),
+        broj_objave_eojn: brojObjave.trim() || undefined,
+        klasa_odluke: klasaOdluke.trim() || undefined,
+        selected_precedents: selectedKlase.size > 0 ? Array.from(selectedKlase) : undefined,
+      });
+      setNacrt(res);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Generiranje nije uspjelo.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [argument, predmet, narucitelj, brojObjave, klasaOdluke, selectedKlase]);
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -152,13 +202,46 @@ export default function ZalbePage() {
       </form>
 
       {/* REZULTATI */}
-      {result && <ZalbeResults result={result} />}
+      {result && (
+        <ZalbeResults
+          result={result}
+          selectedKlase={selectedKlase}
+          onToggleKlasa={toggleKlasa}
+        />
+      )}
+
+      {/* C.3 — GENERIRANJE NACRTA */}
+      {result && (
+        <GenerateNacrtSection
+          predmet={predmet}
+          setPredmet={setPredmet}
+          narucitelj={narucitelj}
+          setNarucitelj={setNarucitelj}
+          brojObjave={brojObjave}
+          setBrojObjave={setBrojObjave}
+          klasaOdluke={klasaOdluke}
+          setKlasaOdluke={setKlasaOdluke}
+          selectedKlaseCount={selectedKlase.size}
+          generating={generating}
+          genError={genError}
+          onGenerate={onGenerate}
+          nacrt={nacrt}
+        />
+      )}
     </div>
   );
 }
 
 
-function ZalbeResults({ result }: { result: ZalbeAnalyzeResponse }) {
+function ZalbeResults({
+  result,
+  selectedKlase,
+  onToggleKlasa,
+}: {
+  result: ZalbeAnalyzeResponse;
+  selectedKlase: Set<string>;
+  onToggleKlasa: (klasa: string) => void;
+}) {
   const { prediction, similar_precedents } = result;
   const successPercent = (prediction.success_rate * 100).toFixed(0);
 
@@ -242,12 +325,20 @@ function ZalbeResults({ result }: { result: ZalbeAnalyzeResponse }) {
 
       {/* SLIČNI PRESEDANI */}
       <div>
-        <h2 className="font-serif text-xl text-ink mb-3">
+        <h2 className="font-serif text-xl text-ink mb-2">
           Slični DKOM presedani ({similar_precedents.length})
         </h2>
+        <p className="text-xs text-muted mb-3">
+          Označi presedane koje želiš citirati u nacrtu žalbe ↓
+        </p>
         <ul className="space-y-3">
           {similar_precedents.map((p) => (
-            <PrecedentCard key={`${p.klasa}-${p.argument_zalitelja.slice(0, 30)}`} precedent={p} />
+            <PrecedentCard
+              key={`${p.klasa}-${p.argument_zalitelja.slice(0, 30)}`}
+              precedent={p}
+              selected={selectedKlase.has(p.klasa)}
+              onToggle={() => onToggleKlasa(p.klasa)}
+            />
           ))}
         </ul>
       </div>
@@ -256,7 +347,15 @@ function ZalbeResults({ result }: { result: ZalbeAnalyzeResponse }) {
 }
 
 
-function PrecedentCard({ precedent: p }: { precedent: SimilarPrecedent }) {
+function PrecedentCard({
+  precedent: p,
+  selected,
+  onToggle,
+}: {
+  precedent: SimilarPrecedent;
+  selected: boolean;
+  onToggle: () => void;
+}) {
   const verdictColor = VERDICT_COLORS[p.dkom_verdict] || "bg-muted/15 text-muted border-muted/30";
   const verdictLabel = {
     uvazen: "uvazen",
@@ -266,39 +365,48 @@ function PrecedentCard({ precedent: p }: { precedent: SimilarPrecedent }) {
   }[p.dkom_verdict] || p.dkom_verdict;
 
   return (
-    <li className="rounded-lg border border-brand-border bg-surface-2 p-5">
+    <li className={`rounded-lg border p-5 transition ${selected ? "border-signal bg-signal/5" : "border-brand-border bg-surface-2"}`}>
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="font-mono text-xs text-muted">
-              {p.pdf_url ? (
-                <a
-                  href={p.pdf_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-signal hover:underline"
-                >
-                  {p.klasa} ↗
-                </a>
-              ) : (
-                p.klasa
+        <label className="flex items-start gap-3 cursor-pointer min-w-0 flex-1">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            className="mt-1 h-4 w-4 rounded border-brand-border text-signal focus:ring-signal cursor-pointer"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="font-mono text-xs text-muted">
+                {p.pdf_url ? (
+                  <a
+                    href={p.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-signal hover:underline"
+                  >
+                    {p.klasa} ↗
+                  </a>
+                ) : (
+                  p.klasa
+                )}
+              </span>
+              {p.datum_odluke && (
+                <span className="text-xs text-muted">· {p.datum_odluke}</span>
               )}
-            </span>
-            {p.datum_odluke && (
-              <span className="text-xs text-muted">· {p.datum_odluke}</span>
+              <span className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border ${verdictColor}`}>
+                {verdictLabel}
+              </span>
+              <span className="text-[10px] text-muted font-mono ml-auto">
+                {(p.similarity * 100).toFixed(0)}% sličnost
+              </span>
+            </div>
+            <p className="text-sm text-ink font-medium">{p.predmet}</p>
+            {p.narucitelj && (
+              <p className="text-[11px] text-muted mt-0.5">Naručitelj: {p.narucitelj}</p>
             )}
-            <span className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border ${verdictColor}`}>
-              {verdictLabel}
-            </span>
-            <span className="text-[10px] text-muted font-mono ml-auto">
-              {(p.similarity * 100).toFixed(0)}% sličnost
-            </span>
           </div>
-          <p className="text-sm text-ink font-medium">{p.predmet}</p>
-          {p.narucitelj && (
-            <p className="text-[11px] text-muted mt-0.5">Naručitelj: {p.narucitelj}</p>
-          )}
-        </div>
+        </label>
       </div>
 
       <details className="text-sm">
@@ -331,5 +439,185 @@ function PrecedentCard({ precedent: p }: { precedent: SimilarPrecedent }) {
         </div>
       </details>
     </li>
+  );
+}
+
+
+function GenerateNacrtSection({
+  predmet,
+  setPredmet,
+  narucitelj,
+  setNarucitelj,
+  brojObjave,
+  setBrojObjave,
+  klasaOdluke,
+  setKlasaOdluke,
+  selectedKlaseCount,
+  generating,
+  genError,
+  onGenerate,
+  nacrt,
+}: {
+  predmet: string;
+  setPredmet: (v: string) => void;
+  narucitelj: string;
+  setNarucitelj: (v: string) => void;
+  brojObjave: string;
+  setBrojObjave: (v: string) => void;
+  klasaOdluke: string;
+  setKlasaOdluke: (v: string) => void;
+  selectedKlaseCount: number;
+  generating: boolean;
+  genError: string | null;
+  onGenerate: (e: FormEvent) => void;
+  nacrt: ZalbeGenerateResponse | null;
+}) {
+  return (
+    <div className="rounded-lg border border-brand-border bg-surface-2 p-5 space-y-4">
+      <div>
+        <h2 className="font-serif text-xl text-ink mb-1">Generiraj nacrt žalbe</h2>
+        <p className="text-xs text-muted">
+          LLM piše nacrt na temelju tvog argumenta i {selectedKlaseCount > 0
+            ? <><strong className="text-ink">{selectedKlaseCount}</strong> odabranih presedana</>
+            : "auto-odabranih sličnih presedana"
+          }.
+        </p>
+      </div>
+
+      <form onSubmit={onGenerate} className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="predmet" className="block text-sm font-medium text-ink mb-2">
+              Predmet nabave <span className="text-status-fail">*</span>
+            </label>
+            <input
+              id="predmet"
+              type="text"
+              value={predmet}
+              onChange={(e) => setPredmet(e.target.value)}
+              placeholder="Izgradnja igrališta Bundek"
+              className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm text-navy placeholder:text-muted/70"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="narucitelj" className="block text-sm font-medium text-ink mb-2">
+              Naručitelj <span className="text-status-fail">*</span>
+            </label>
+            <input
+              id="narucitelj"
+              type="text"
+              value={narucitelj}
+              onChange={(e) => setNarucitelj(e.target.value)}
+              placeholder="Grad Zagreb"
+              className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm text-navy placeholder:text-muted/70"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="broj_objave" className="block text-sm font-medium text-ink mb-2">
+              Broj objave EOJN <span className="text-muted">(opcionalno)</span>
+            </label>
+            <input
+              id="broj_objave"
+              type="text"
+              value={brojObjave}
+              onChange={(e) => setBrojObjave(e.target.value)}
+              placeholder="2025/S 0F2-0012345"
+              className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm text-navy placeholder:text-muted/70 font-mono"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="klasa_odluke" className="block text-sm font-medium text-ink mb-2">
+              Klasa osporavane odluke <span className="text-muted">(opcionalno)</span>
+            </label>
+            <input
+              id="klasa_odluke"
+              type="text"
+              value={klasaOdluke}
+              onChange={(e) => setKlasaOdluke(e.target.value)}
+              placeholder="406-01/25-01/N"
+              className="w-full rounded-md border border-brand-border bg-surface px-3 py-2 text-sm text-navy placeholder:text-muted/70 font-mono"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={generating || !predmet.trim() || !narucitelj.trim()}
+            className="rounded-md bg-signal text-surface px-6 py-2.5 font-medium hover:bg-signal/90 transition disabled:opacity-50"
+          >
+            {generating ? "Generiram…" : "Generiraj nacrt"}
+          </button>
+          {genError && (
+            <p className="text-sm text-status-fail">{genError}</p>
+          )}
+        </div>
+      </form>
+
+      {nacrt && <NacrtViewer nacrt={nacrt} />}
+    </div>
+  );
+}
+
+
+function NacrtViewer({ nacrt }: { nacrt: ZalbeGenerateResponse }) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(nacrt.nacrt_text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  }, [nacrt.nacrt_text]);
+
+  const downloadUrl = useMemo(() => {
+    const blob = new Blob([nacrt.nacrt_text], { type: "text/plain;charset=utf-8" });
+    return URL.createObjectURL(blob);
+  }, [nacrt.nacrt_text]);
+
+  return (
+    <div className="rounded-lg border border-signal/30 bg-surface p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 text-xs text-muted">
+          <span><strong className="text-ink font-mono">{nacrt.word_count}</strong> riječi</span>
+          {nacrt.cited_precedents.length > 0 && (
+            <span>· <strong className="text-ink">{nacrt.cited_precedents.length}</strong> presedana citirano</span>
+          )}
+          {nacrt.cited_zjn_articles.length > 0 && (
+            <span>· <strong className="text-ink">{nacrt.cited_zjn_articles.length}</strong> ZJN čl.</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCopy}
+            className="rounded-md border border-brand-border bg-surface-2 hover:bg-surface px-3 py-1.5 text-xs text-navy transition"
+          >
+            {copied ? "Kopirano ✓" : "Kopiraj"}
+          </button>
+          <a
+            href={downloadUrl}
+            download={`nacrt-zalbe-${new Date().toISOString().slice(0, 10)}.txt`}
+            className="rounded-md border border-brand-border bg-surface-2 hover:bg-surface px-3 py-1.5 text-xs text-navy transition"
+          >
+            Preuzmi .txt
+          </a>
+        </div>
+      </div>
+
+      <pre className="whitespace-pre-wrap font-serif text-sm text-ink leading-relaxed bg-surface-2 p-4 rounded border border-brand-border max-h-[600px] overflow-y-auto">
+        {nacrt.nacrt_text}
+      </pre>
+
+      <p className="text-[11px] text-muted italic">
+        Ovo je nacrt — provjeri činjenice, klase presedana i evidencijske brojeve prije podnošenja DKOM-u.
+      </p>
+    </div>
   );
 }
