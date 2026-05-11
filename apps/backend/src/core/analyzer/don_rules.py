@@ -531,3 +531,247 @@ don_rule(
         "kontekstualne signale (kratko vrijeme, neproduljenje nakon izmjene)."
     ),
 )(_kratki_rok_impl)
+
+
+# ---------------------------------------------------------------------------
+# diskrim_uvjeti — uvjeti sposobnosti koji isključuju većinu ponuditelja
+# (ZJN čl. 256-272). 116 pojava u DKOM dataset-u, 38% uvazen rate.
+# Konzervativna detekcija — više signala potrebno zbog rizika false positive.
+
+# Godine iskustva — "N godina" u kontekstu iskustva, gdje je N visok
+_YEARS_EXPERIENCE_RE = re.compile(
+    r"\b(\d+)\s*\+?\s*godin[ae]?\s+(?:isk|rad|prak|stru[čc])",
+    re.IGNORECASE,
+)
+
+# Tuzemne komore / HR-only uvjeti (ograničavaju EU subjekte) — sve padežne varijante
+_HR_LIMITING_TERMS = (
+    "hrvatska komora",
+    "hrvatske komore",
+    "hrvatskoj komori",
+    "hrvatsku komoru",
+    "hrvatskom komorom",
+    "hkis",  # Hrvatska komora inženjera strojarstva — kratica
+    "hkig",  # građevinarstva
+    "hkae",  # arhitekata
+    "tuzemnoj",
+    "tuzemnog",
+    "tuzemnih",
+    "tuzemski",
+    "tuzemne",
+    "tuzemni propis",
+    "samo u rh",
+    "samo u hrvatskoj",
+    "registrira u rh",
+    "sjedište u rh",
+    "sjedište u hrvatskoj",
+)
+
+# Specifični certifikati / ovlaštenja koje malo tko ima
+_RESTRICTIVE_CERT_TERMS = (
+    "ovjerenu potvrdu proizvođača",
+    "ovjerenu izjavu proizvođača",
+    "ovjerenu potvrdu proizvodjaca",
+    "ovjerenu izjavu proizvodjaca",
+    "ovlaštenje proizvođača",
+    "ovlast proizvođača",
+    "ovlas. proizvod",
+    "ovlašteni distributer",
+    "ovlasteni distributer",
+    "ekskluzivni distributer",
+    "potvrda hakom",
+    "potvrdu hakom",
+    "potvrdu hakom-a",
+    "potvrda agencije",
+)
+
+# Vlastiti pogon / servis / oprema (često stroga eliminacija) — sve padežne
+_OWN_RESOURCES_TERMS = (
+    "vlastiti pogon", "vlastitog pogona", "vlastitim pogonom", "vlastitom pogonu",
+    "vlastiti servis", "vlastitog servisa", "vlastitim servisom",
+    "vlastita oprema", "vlastite opreme", "vlastitu opremu", "vlastitom opremom",
+    "vlastita mreža", "vlastite mreže", "vlastitom mrežom",
+    "vlastiti laboratorij", "vlastitim laboratorij",
+    "vlastiti sustav", "vlastitim sustavom",
+    "u vlasništvu ponuditelj",
+    "raspolaganje vlastit",
+)
+
+# Eksplicitni izrazi koje DKOM već koristi kao indikatore
+_DISCRIM_INDICATOR_TERMS = (
+    "diskrim",
+    "isključuje",
+    "isključuju",
+    "iskljucuje",
+    "onemogu",
+    "ne mogu sudjelov",
+    "prepuska prag",
+    "prestrog",
+    "nadmašuje",
+    "prekorač",
+    "neopravdano usk",
+    "nemoguće zadovolj",
+    "nemoguce zadovolj",
+    "ograničava tržišn",
+)
+
+# Min N referenci/projekata
+_REFERENCES_COUNT_RE = re.compile(
+    r"\b(?:najmanje|minimum|minimalno|min\.?|barem|najmanj)\s+(\d+)\s+(?:izvedenih\s+)?(?:referenc|projek|ugovor|isporuk|usl|posl)",
+    re.IGNORECASE,
+)
+
+
+def _check_years_experience(text: str) -> tuple[int, list[str]]:
+    """Detektiraj zahtjeve >= 7 godina iskustva (sumnjivo)."""
+    matches = []
+    for m in _YEARS_EXPERIENCE_RE.finditer(text):
+        try:
+            years = int(m.group(1))
+            if years >= 7:
+                matches.append(f"{years} godina iskustva")
+        except ValueError:
+            continue
+    return len(matches), matches
+
+
+def _check_term_list(text_lower: str, terms: tuple[str, ...]) -> tuple[int, list[str]]:
+    hits = [t for t in terms if t in text_lower]
+    return len(hits), hits
+
+
+def _check_references_count(text: str) -> tuple[int, list[str]]:
+    """Detektiraj min N referenci/projekata gdje N >= 5."""
+    matches = []
+    for m in _REFERENCES_COUNT_RE.finditer(text):
+        try:
+            n = int(m.group(1))
+            if n >= 5:
+                matches.append(m.group(0))
+        except ValueError:
+            continue
+    return len(matches), matches
+
+
+def _diskrim_uvjeti_impl(item: ParsedItem) -> list[Finding]:
+    """Detektira uvjete sposobnosti koji diskriminiraju ponuditelje.
+
+    Strategija: skupljanje signala. Konzervativan — 2+ signala = WARN,
+    3+ = FAIL. Mnogi pojedinačni uvjeti su opravdani (godine iskustva za
+    sloveniju, certifikat za telekom...), pa flag samo kad više pattern-a
+    ukazuje na sistematsku diskriminaciju.
+    """
+    from src.api.schemas.analysis import AnalysisItemStatus
+
+    text = item.text or ""
+    if len(text) < 50:
+        return []
+
+    text_lower = text.lower()
+
+    signals: list[tuple[str, list[str]]] = []
+
+    n, ex = _check_years_experience(text)
+    if n > 0:
+        signals.append(("godine_iskustva", ex))
+        # ≥10 godina je jaka indikacija — broji se kao 2 signala
+        for e in ex:
+            try:
+                yrs = int(e.split()[0])
+                if yrs >= 10:
+                    signals.append(("godine_iskustva_visoke", [e]))
+                    break
+            except (ValueError, IndexError):
+                continue
+
+    n, ex = _check_term_list(text_lower, _HR_LIMITING_TERMS)
+    if n > 0:
+        signals.append(("hr_ograničenje", ex))
+        # Tuzemne komore su strog signal sam po sebi
+        if any("komor" in t or "tuzemn" in t for t in ex):
+            signals.append(("hr_strong_signal", ex))
+
+    n, ex = _check_term_list(text_lower, _RESTRICTIVE_CERT_TERMS)
+    if n > 0:
+        signals.append(("restriktivni_certifikat", ex))
+
+    n, ex = _check_term_list(text_lower, _OWN_RESOURCES_TERMS)
+    if n > 0:
+        signals.append(("vlastiti_resursi", ex))
+
+    n, ex = _check_term_list(text_lower, _DISCRIM_INDICATOR_TERMS)
+    if n > 0:
+        signals.append(("diskriminacijski_izraz", ex))
+
+    n, ex = _check_references_count(text)
+    if n > 0:
+        signals.append(("velik_broj_referenci", ex))
+
+    if len(signals) < 2:
+        return []
+
+    # 3+ signala = FAIL (jaka indikacija), 2 signala = WARN
+    status = (
+        AnalysisItemStatus.FAIL.value if len(signals) >= 3
+        else AnalysisItemStatus.WARN.value
+    )
+
+    signal_labels = {
+        "godine_iskustva": "visoki broj godina iskustva (≥7)",
+        "godine_iskustva_visoke": None,  # skip — included in godine_iskustva
+        "hr_ograničenje": "ograničenje na hrvatske subjekte",
+        "hr_strong_signal": None,  # skip
+        "restriktivni_certifikat": "ovlaštenje/potvrda specifičnog izvora",
+        "vlastiti_resursi": "vlastiti pogon/servis/oprema",
+        "diskriminacijski_izraz": "izraz diskriminacijske prirode",
+        "velik_broj_referenci": "min. 5+ referenci/projekata",
+    }
+    detail_parts = []
+    seen = set()
+    for sig_type, examples in signals:
+        if sig_type in seen:
+            continue
+        label = signal_labels.get(sig_type, sig_type)
+        if label is None:
+            continue  # internal signal, ne za prikaz
+        seen.add(sig_type)
+        ex_str = ", ".join(f"„{e}”" for e in examples[:2])
+        detail_parts.append(f"• {label}: {ex_str}")
+
+    explanation = (
+        f"Detektirani signali ({len(signals)}) koji upućuju na diskriminatorne "
+        f"uvjete sposobnosti:\n"
+        + "\n".join(detail_parts)
+        + "\n\nZJN čl. 256-272 traži da uvjeti sposobnosti budu razmjerni "
+        "predmetu nabave i ne smiju neopravdano isključivati ponuditelje. "
+        "Posebno pažljivo s ograničavanjem na tuzemne komore (EU sloboda "
+        "kretanja) i s pretjeranim godinama iskustva."
+    )
+    suggestion = (
+        "Provjeri da su uvjeti razmjerni predmetu nabave. Razmotri: "
+        "(1) prihvaćanje EU komora paralelno s hrvatskom, "
+        "(2) smanjenje minimuma godina iskustva ako predmet to dopušta, "
+        "(3) prihvaćanje jednakovrijednih dokaza umjesto specifičnih potvrda."
+    )
+
+    return [
+        {
+            "kind": "diskrim_uvjeti",
+            "status": status,
+            "explanation": explanation,
+            "suggestion": suggestion,
+            "is_mock": False,
+            "citations": [],  # auto-enrichment
+        }
+    ]
+
+
+don_rule(
+    name="diskrim_uvjeti",
+    applies_to=("paragraph", "requirement", "criterion", "list"),
+    description=(
+        "Uvjeti sposobnosti (financijska, tehnička, stručna) koji neopravdano "
+        "isključuju ponuditelje. Multi-signal: godine iskustva, tuzemne komore, "
+        "restriktivni certifikati, vlastiti resursi. ZJN čl. 256-272."
+    ),
+)(_diskrim_uvjeti_impl)

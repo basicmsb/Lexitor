@@ -344,9 +344,9 @@ async def _enrich_findings_with_citations(
         "brand_lock": "brand_lock",
         "neprecizna_specifikacija": "neprecizna_specifikacija",
         "kratki_rok": "kratki_rok",
+        "diskrim_uvjeti": "diskrim_uvjeti",
         # Buduća pravila:
         # "vague_kriterij": "vague_kriterij",
-        # "diskrim_uvjeti": "diskrim_uvjeti",
     }
 
     # Cache po claim_type — više finding-a istog tipa dijeli citaciju
