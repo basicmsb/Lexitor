@@ -22,6 +22,8 @@ import type {
   TokenPair,
   TroskovnikType,
   UserAddedFindingCreate,
+  ZalbeAnalyzeRequest,
+  ZalbeAnalyzeResponse,
 } from "@/lib/types";
 
 export const API_BASE_URL =
@@ -337,6 +339,16 @@ export const api = {
   async deleteSpotcheckFeedback(claimId: string): Promise<void> {
     await request(`/admin/dkom-spotcheck/feedback/${encodeURIComponent(claimId)}`, {
       method: "DELETE",
+    });
+  },
+
+  // --- Žalbe modul ---
+
+  async analyzeZalba(payload: ZalbeAnalyzeRequest): Promise<ZalbeAnalyzeResponse> {
+    return request<ZalbeAnalyzeResponse>("/zalbe/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
   },
 };

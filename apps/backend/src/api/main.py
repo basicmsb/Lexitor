@@ -12,6 +12,7 @@ from src.api.routes import documents as documents_routes
 from src.api.routes import knowledge as knowledge_routes
 from src.api.routes import labels as labels_routes
 from src.api.routes import projects as projects_routes
+from src.api.routes import zalbe as zalbe_routes
 from src.db.session import SessionLocal
 from src.models import Analysis, AnalysisStatus
 from src.utils.config import settings
@@ -64,6 +65,7 @@ app.include_router(knowledge_routes.router)
 app.include_router(projects_routes.router)
 app.include_router(labels_routes.router)
 app.include_router(admin_spotcheck_routes.router)
+app.include_router(zalbe_routes.router)
 
 
 @app.get("/health", tags=["health"])

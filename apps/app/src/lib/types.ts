@@ -270,3 +270,48 @@ export interface SpotcheckStats {
   by_category_accuracy: Record<string, { correct: number; wrong: number; accuracy: number }>;
   miscls: { llm_said: string; correct: string; count: number }[];
 }
+
+// ---------------------------------------------------------------------------
+// Žalbe modul
+
+export type ZalbeClaimType = ClaimType | "auto";
+
+export interface ZalbeAnalyzeRequest {
+  argument: string;
+  claim_type?: ZalbeClaimType;
+  vijece_members?: string[];
+  limit?: number;
+}
+
+export interface SimilarPrecedent {
+  klasa: string;
+  predmet: string;
+  datum_odluke: string | null;
+  narucitelj: string | null;
+  vrsta_postupka: string | null;
+  claim_type: string;
+  dkom_verdict: string;
+  argument_zalitelja: string;
+  dkom_obrazlozenje: string;
+  violated_article_claimed: string | null;
+  outcome: string | null;
+  vijece: string[];
+  pdf_url: string | null;
+  similarity: number;
+}
+
+export interface ZalbePrediction {
+  n_similar: number;
+  success_rate: number;
+  detected_claim_type: string;
+  type_distribution: Record<string, number>;
+  panel_rate: number | null;
+  panel_n_cases: number | null;
+  panel_members_found: string[];
+  panel_members_unknown: string[];
+}
+
+export interface ZalbeAnalyzeResponse {
+  prediction: ZalbePrediction;
+  similar_precedents: SimilarPrecedent[];
+}
