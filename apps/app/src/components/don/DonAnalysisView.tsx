@@ -134,100 +134,81 @@ export function DonAnalysisView({
 
   const items = stream.items.length > 0 ? stream.items : historicalItems;
 
-  // Linearan prikaz svih blokova (po redu pojavljivanja u dokumentu).
-  // Section_header-i su izvučeni kao "anchor markeri" — prikazuju se kao
-  // naslov između blokova i imaju ID za scroll-to navigaciju.
-  const { chapters, allBlocks } = useMemo(() => {
-    const chMap = new Map<string, ChapterNode>();
-    // Skupljanje blokova: NE filtriramo po chapter, samo bilježimo redoslijed
-    const blocks: AnalysisItemPublic[] = [];
-    items.forEach((it, idx) => {
-      const path = getChapterPath(it);
-      const key = chapterKey(path);
-      if (!chMap.has(key)) {
-        const top = path[0];
-        chMap.set(key, {
-          key,
-          depth: top?.depth ?? 0,
-          title: top?.title ?? "(uvod)",
-          rb: getRb(it),
-          startIndex: idx,
-          blockCount: 0,
-          issueCount: 0,
-        });
-      }
-      const ch = chMap.get(key)!;
+  // Linearan prikaz svih items (header + content blocks po redu).
+  // Section_header-i ostaju INLINE u glavnom toku (crveni accent, bez LA).
+  // Content blocks dobivaju plavi okvir + LA card pored sebe.
+  // TOC sadrži oba: headers (boldano) + content blocks (kao kratki preview).
+  const { tocEntries, allItems } = useMemo(() => {
+    const list: AnalysisItemPublic[] = [];
+    const toc: Array<{
+      itemId: string;
+      label: string;
+      isHeader: boolean;
+      depth: number;
+      rb: string | null;
+      issueCount: number;
+    }> = [];
+    items.forEach((it) => {
+      list.push(it);
       const kind = getKind(it);
-      if (kind !== "section_header") {
-        blocks.push(it);
-        ch.blockCount += 1;
-        if (it.status === "warn" || it.status === "fail") {
-          ch.issueCount += 1;
-        }
+      const isHeader = kind === "section_header";
+      // Label za TOC: ako je header, koristi title; ako blok, koristi prvih ~60 char teksta
+      const meta = (it.metadata_json ?? {}) as Record<string, unknown>;
+      const title = meta.title as string | undefined;
+      let label: string;
+      if (isHeader && title) {
+        label = title;
+      } else {
+        const text = (it.text || "").replace(/\n+/g, " ").trim();
+        label = text.length > 60 ? text.slice(0, 60) + "…" : text;
       }
+      const hasIssue =
+        !isHeader && (it.status === "warn" || it.status === "fail");
+      toc.push({
+        itemId: it.id,
+        label,
+        isHeader,
+        depth: isHeader ? (meta.depth as number) ?? 1 : 0,
+        rb: getRb(it),
+        issueCount: hasIssue ? 1 : 0,
+      });
     });
-    const allChapters = Array.from(chMap.values()).sort(
-      (a, b) => a.startIndex - b.startIndex,
-    );
-    // Sakrij chapter-e bez sadržajnih blokova — preg-headeri tipa
-    // "A. OPĆI DIO" → "1. OPĆA DOKUMENTACIJA" → "1.1 OPĆA DOKUMENTACIJA"
-    // gdje samo najdublji nivo sadrži stvarni tekst. UX svrha: TOC pokazuje
-    // poglavlja koja STVARNO sadrže analizirane blokove.
-    const sorted = allChapters.filter((c) => c.blockCount > 0);
-    return { chapters: sorted, allBlocks: blocks };
+    return { tocEntries: toc, allItems: list };
   }, [items]);
 
+  // Track active item za scroll-spy highlight u TOC-u
   useEffect(() => {
-    if (chapters.length === 0) return;
-    if (!activeChapter || !chapters.find((c) => c.key === activeChapter)) {
-      setActiveChapter(chapters[0].key);
+    if (allItems.length === 0) return;
+    if (!activeChapter) {
+      setActiveChapter(allItems[0].id);
     }
-  }, [chapters, activeChapter]);
+  }, [allItems, activeChapter]);
 
-  // Track block-to-chapter mapping za scroll detection
-  const blockChapterMap = useMemo(() => {
-    const m = new Map<string, string>();
-    allBlocks.forEach((b) => {
-      const path = getChapterPath(b);
-      m.set(b.id, chapterKey(path));
-    });
-    return m;
-  }, [allBlocks]);
+  const scrollToItem = useCallback((itemId: string) => {
+    const el = window.document.querySelector(`[data-block-id="${itemId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveChapter(itemId);
+  }, []);
 
-  // Scroll-spy: prati koji chapter je trenutno u viewport-u i highlight TOC.
-  // Koristi IntersectionObserver na svaki blok (data-chapter atribut).
+  // Scroll-spy: prati koji item je u top 1/3 viewport-a i highlight TOC.
   useEffect(() => {
-    if (allBlocks.length === 0) return;
+    if (allItems.length === 0) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        // Uzmi prvi vidljiv blok (top-most)
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
         if (visible.length > 0) {
-          const ch = visible[0].target.getAttribute("data-chapter");
-          if (ch) setActiveChapter(ch);
+          const id = visible[0].target.getAttribute("data-block-id");
+          if (id) setActiveChapter(id);
         }
       },
-      { rootMargin: "-20% 0px -60% 0px" }, // active when top 20-40% of viewport
+      { rootMargin: "-20% 0px -60% 0px" },
     );
     const els = window.document.querySelectorAll("[data-block-id]");
     els.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [allBlocks]);
-
-  const scrollToChapter = useCallback((chapterKey: string) => {
-    // Pronađi prvi blok s ovim chapter-om
-    const firstBlock = allBlocks.find(
-      (b) => blockChapterMap.get(b.id) === chapterKey,
-    );
-    if (!firstBlock) return;
-    const el = window.document.querySelector(
-      `[data-block-id="${firstBlock.id}"]`,
-    );
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActiveChapter(chapterKey);
-  }, [allBlocks, blockChapterMap]);
+  }, [allItems]);
 
   const summary = useMemo(() => {
     let ok = 0, warn = 0, fail = 0, neutral = 0;
@@ -355,39 +336,42 @@ export function DonAnalysisView({
       <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 gap-4 overflow-hidden">
         <aside className="md:col-span-3 min-h-0 max-h-[30vh] md:max-h-none md:h-full overflow-y-auto md:border-r border-brand-border md:pr-2 pb-2 md:pb-0 border-b md:border-b-0">
           <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted mb-3">
-            Sadržaj ({chapters.length} poglavlja)
+            Sadržaj ({tocEntries.length} stavki)
           </div>
-          <ul className="space-y-1">
-            {chapters.map((ch) => {
-              const isActive = ch.key === activeChapter;
-              const indent =
-                ch.depth >= 4 ? "ml-9" : ch.depth >= 3 ? "ml-6" : ch.depth >= 2 ? "ml-3" : "";
+          <ul className="space-y-0.5">
+            {tocEntries.map((entry) => {
+              const isActive = entry.itemId === activeChapter;
+              // Indent: section_header-i koriste depth (1-6), content blokovi
+              // su uvučeni pod zadnjim section_header-om
+              const indent = entry.isHeader
+                ? entry.depth >= 4 ? "ml-6" : entry.depth >= 3 ? "ml-4" : entry.depth >= 2 ? "ml-2" : ""
+                : "ml-3"; // content blokovi uvučeni za 1 razinu od najmanjeg header-a
+              const baseClasses = entry.isHeader
+                ? "font-semibold text-ink"
+                : "text-navy text-xs";
               return (
-                <li key={ch.key}>
+                <li key={entry.itemId}>
                   <button
                     type="button"
-                    onClick={() => scrollToChapter(ch.key)}
-                    className={`w-full text-left px-2 py-1.5 rounded text-sm transition ${indent} ${
-                      isActive ? "bg-ink/5 text-ink font-medium" : "text-navy hover:bg-surface-2"
+                    onClick={() => scrollToItem(entry.itemId)}
+                    className={`w-full text-left px-2 py-1 rounded text-sm transition ${indent} ${baseClasses} ${
+                      isActive ? "bg-signal/10 text-ink" : "hover:bg-surface-2"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate">
-                        {ch.rb && (
-                          <span className="font-mono text-muted text-xs mr-2">
-                            {ch.rb}
+                        {entry.rb && (
+                          <span className="font-mono text-muted text-[10px] mr-1.5">
+                            {entry.rb}
                           </span>
                         )}
-                        {ch.title}
+                        {entry.label}
                       </span>
-                      {ch.issueCount > 0 && (
-                        <span className="text-[10px] bg-status-fail/10 text-status-fail px-1.5 py-0.5 rounded shrink-0">
-                          {ch.issueCount}
+                      {entry.issueCount > 0 && (
+                        <span className="text-[9px] bg-status-fail/10 text-status-fail px-1 py-0.5 rounded shrink-0">
+                          !
                         </span>
                       )}
-                    </div>
-                    <div className="text-[10px] text-muted mt-0.5">
-                      {ch.blockCount} {ch.blockCount === 1 ? "blok" : "blokova"}
                     </div>
                   </button>
                 </li>
@@ -397,43 +381,73 @@ export function DonAnalysisView({
         </aside>
 
         <main className="md:col-span-9 min-h-0 h-full overflow-y-auto pr-2 space-y-3 scroll-smooth">
-          {allBlocks.length === 0 ? (
+          {allItems.length === 0 ? (
             <p className="text-sm text-muted italic">
               Nema analiziranih blokova u dokumentu.
             </p>
           ) : (
-            allBlocks.map((block) => {
-              const status = block.status || "neutral";
-              const accent = STATUS_COLORS[status] || "#D5D2C7";
-              const kind = getKind(block);
-              const rb = getRb(block);
-              const chapterPath = getChapterPath(block);
-              const chKey = chapterKey(chapterPath);
+            allItems.map((item) => {
+              const kind = getKind(item);
+              const rb = getRb(item);
+              const isHeader = kind === "section_header";
+
+              // SECTION HEADER — crveni accent, bez LA, vizualno "grupna"
+              if (isHeader) {
+                const meta = (item.metadata_json ?? {}) as Record<string, unknown>;
+                const depth = (meta.depth as number) ?? 1;
+                const headerSize =
+                  depth === 1 ? "text-xl" : depth === 2 ? "text-lg" : "text-base";
+                return (
+                  <div
+                    key={item.id}
+                    data-block-id={item.id}
+                    className="scroll-mt-4 pt-3"
+                  >
+                    <div
+                      className={`flex items-baseline gap-3 pb-2 border-b-2 border-status-fail/40`}
+                    >
+                      {rb && (
+                        <span className="font-mono text-sm text-status-fail/80 shrink-0">
+                          {rb}
+                        </span>
+                      )}
+                      <h2
+                        className={`font-display ${headerSize} text-status-fail font-semibold uppercase tracking-wide`}
+                      >
+                        {item.text || (meta.title as string) || ""}
+                      </h2>
+                    </div>
+                  </div>
+                );
+              }
+
+              // CONTENT BLOCK — plavi okvir + LA pored
+              const status = item.status || "neutral";
+              const accent = STATUS_COLORS[status] || "#3B82C4"; // signal blue default
               return (
                 <div
-                  key={block.id}
-                  data-block-id={block.id}
-                  data-chapter={chKey}
+                  key={item.id}
+                  data-block-id={item.id}
                   className="flex flex-col md:flex-row gap-4 md:items-stretch scroll-mt-4"
                 >
                   <article
-                    className="md:flex-[2] rounded-lg border border-brand-border bg-surface-2 p-5 border-l-4"
-                    style={{ borderLeftColor: accent }}
+                    className="md:flex-[2] rounded-lg border-2 border-signal/40 bg-surface-2 p-4"
+                    style={{ borderColor: accent }}
                   >
-                    <header className="flex items-baseline gap-3 mb-2">
-                      <span className="text-[11px] uppercase tracking-[0.18em] font-semibold text-muted">
+                    <header className="flex items-baseline gap-3 mb-1.5">
+                      <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-muted">
                         {KIND_LABELS[kind] || kind}
                       </span>
                       {rb && (
-                        <span className="text-sm text-muted font-mono">{rb}</span>
+                        <span className="text-xs text-muted font-mono">{rb}</span>
                       )}
                     </header>
                     <p className="text-sm text-navy leading-relaxed whitespace-pre-line">
-                      {block.text}
+                      {item.text}
                     </p>
                   </article>
                   <div className="md:flex-1 space-y-3">
-                    <BlockFindings findings={block.findings ?? []} />
+                    <BlockFindings findings={item.findings ?? []} />
                   </div>
                 </div>
               );
