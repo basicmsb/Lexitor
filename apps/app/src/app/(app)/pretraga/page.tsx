@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { api } from "@/lib/api";
 import type { KnowledgeHit, KnowledgeSourceKind } from "@/lib/types";
@@ -16,6 +17,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export default function PretragaPage() {
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [hits, setHits] = useState<KnowledgeHit[]>([]);
@@ -23,23 +25,49 @@ export default function PretragaPage() {
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
 
+  const runSearch = useCallback(
+    async (q: string, f: Filter) => {
+      if (!q.trim()) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const sourceArg: KnowledgeSourceKind | undefined =
+          f === "all" ? undefined : (f as KnowledgeSourceKind);
+        const data = await api.searchKnowledge(q, { limit: 10, source: sourceArg });
+        setHits(data.hits);
+        setSearched(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Pretraga nije uspjela.");
+        setHits([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  // Pre-popuni iz URL query parametara (npr. /pretraga?q=čl.+280&source=zjn)
+  // i automatski pokreni pretragu — koristi se kao deep-link iz drugih
+  // dijelova app-a (spot-check, DON analiza, blog).
+  useEffect(() => {
+    const q = searchParams.get("q");
+    const source = searchParams.get("source") as Filter | null;
+    if (q) setQuery(q);
+    if (source && ["all", "zjn", "dkom"].includes(source)) {
+      setFilter(source);
+    }
+    if (q) {
+      const initialFilter: Filter =
+        source && ["all", "zjn", "dkom"].includes(source) ? source : "all";
+      void runSearch(q, initialFilter);
+    }
+    // run only on initial mount — subsequent changes manage state lokalno
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!query.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const sourceArg: KnowledgeSourceKind | undefined =
-        filter === "all" ? undefined : (filter as KnowledgeSourceKind);
-      const data = await api.searchKnowledge(query, { limit: 10, source: sourceArg });
-      setHits(data.hits);
-      setSearched(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Pretraga nije uspjela.");
-      setHits([]);
-    } finally {
-      setLoading(false);
-    }
+    await runSearch(query, filter);
   }
 
   return (

@@ -47,7 +47,7 @@ function parseArticleRefs(text: string): { text: string; href?: string }[] {
     }
     segments.push({
       text: match[0],
-      href: `/pretraga?q=${encodeURIComponent(`ZJN ${match[0]}`)}`,
+      href: `/pretraga?q=${encodeURIComponent(match[0])}&source=zjn`,
     });
     lastEnd = (match.index ?? 0) + match[0].length;
   }
