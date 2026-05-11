@@ -128,23 +128,48 @@ def member_stats(decisions: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def panel_stats(decisions: list[dict[str, Any]], min_cases: int = 3) -> dict[str, Any]:
-    """Trio panel statistika — koliko puta su isti 3 člana sjedili zajedno
-    i kako su odlučili."""
+    """Panel statistika — koliko puta su isti članovi sjedili zajedno
+    i kako su odlučili. Odvojeno tracks 3-člana, 5-člana i ostale sastave
+    (DKOM ponekad sudi u 5-člana vijeća za složene predmete)."""
     panel_cases: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    panel_size_counts: Counter[int] = Counter()
     for d in decisions:
         members = tuple(sorted(m["ime"] for m in d.get("vijece", [])))
+        panel_size_counts[len(members)] += 1
         if len(members) >= 2:
             panel_cases[members].append(d)
 
+    # Splitamo po veličini vijeća — različite statistike su smislene
+    by_size: dict[int, dict[str, Any]] = defaultdict(dict)
+    for panel, cases in sorted(panel_cases.items(), key=lambda x: -len(x[1])):
+        if len(cases) < min_cases:
+            continue
+        size = len(panel)
+        outs = Counter(c["outcome"] for c in cases)
+        uvazen = outs.get("usvojena", 0) + outs.get("djelomicno_usvojena", 0) * 0.5
+        razmatran = sum(v for k, v in outs.items() if k not in ("odbacena", "obustavljen"))
+        rate = uvazen / razmatran if razmatran > 0 else None
+        by_size[size][" + ".join(panel)] = {
+            "panel_size": size,
+            "total_cases": len(cases),
+            "outcomes": dict(outs),
+            "usvojen_rate": rate,
+        }
+
+    # Flat output (zadrži kompatibilnost s print_summary) — ali dodaj size info
     result = {}
-    for trio, cases in sorted(panel_cases.items(), key=lambda x: -len(x[1])):
+    result["_panel_size_distribution"] = dict(panel_size_counts)
+    for panel, cases in sorted(panel_cases.items(), key=lambda x: -len(x[1])):
         if len(cases) < min_cases:
             continue
         outs = Counter(c["outcome"] for c in cases)
         uvazen = outs.get("usvojena", 0) + outs.get("djelomicno_usvojena", 0) * 0.5
         razmatran = sum(v for k, v in outs.items() if k not in ("odbacena", "obustavljen"))
         rate = uvazen / razmatran if razmatran > 0 else None
-        result[" + ".join(trio)] = {
+        size_label = f"{len(panel)}č" if len(panel) != 3 else "trio"
+        key = f"[{size_label}] {' + '.join(panel)}"
+        result[key] = {
+            "panel_size": len(panel),
             "total_cases": len(cases),
             "outcomes": dict(outs),
             "usvojen_rate": rate,
@@ -254,11 +279,26 @@ def print_summary(analysis: dict[str, Any], top: int) -> None:
         print(f"  {name:35s} {info['total_cases']:4d} cases  (usvojen rate: {rate})")
         print(f"    outcomes: {info['outcomes']}")
 
-    print(f"\n{'=' * 70}\nNajčešći trio paneli (≥3 cases):")
-    for trio, info in list(analysis["panels"].items())[:top]:
+    panels = analysis["panels"]
+    print(f"\n{'=' * 70}\nVeličina vijeća (raspodjela):")
+    for size, n in sorted(panels.get("_panel_size_distribution", {}).items()):
+        print(f"  {size}-člano: {n} odluka")
+
+    print(f"\n{'=' * 70}\nNajčešći trio paneli (3č, ≥3 cases):")
+    trio_panels = {k: v for k, v in panels.items() if k != "_panel_size_distribution" and v.get("panel_size") == 3}
+    for panel_key, info in list(trio_panels.items())[:top]:
         rate = f"{info['usvojen_rate']*100:.0f}%" if info["usvojen_rate"] is not None else "-"
-        print(f"\n  {trio}")
+        print(f"\n  {panel_key}")
         print(f"    {info['total_cases']} cases, usvojen rate: {rate}, ishodi: {info['outcomes']}")
+
+    # 5-člana i veća vijeća odvojeno
+    big_panels = {k: v for k, v in panels.items() if k != "_panel_size_distribution" and v.get("panel_size", 0) >= 5}
+    if big_panels:
+        print(f"\n{'=' * 70}\nProšireni sastavi (5+ članova):")
+        for panel_key, info in list(big_panels.items())[:5]:
+            rate = f"{info['usvojen_rate']*100:.0f}%" if info["usvojen_rate"] is not None else "-"
+            print(f"\n  {panel_key}")
+            print(f"    {info['total_cases']} cases, usvojen rate: {rate}")
 
     print(f"\n{'=' * 70}\nInkonzistentnost (isti claim type, suprotni verdikti):")
     for entry in analysis["inconsistencies"][:top]:
