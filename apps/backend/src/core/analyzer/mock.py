@@ -155,27 +155,79 @@ _PLACEHOLDER_ZJN = {
 async def _build_citations(
     item_status: AnalysisItemStatus,
     item_text: str,
+    claim_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Build citations for a flagged item via Qdrant retrieval (RAG).
+    """Build citations za flagged item kroz dual-search Qdrant RAG.
 
-    Embeduje item_text, traži top-3 najslično ZJN/DKOM chunkove. Ako
-    pretraga padne (mreža, prazan korpus), vrati placeholder ZJN ref kao
-    fallback. Production Cohere key (paid, 2026-05-10).
+    Strategija:
+    1. **Claim-level search** (`dkom_claims` collection) — najgranularniji,
+       svaki hit je jedan argument žalitelja s DKOM verdiktom. Filtrira
+       po claim_type ako je poznat (npr. "brand_lock") za relevantnost.
+    2. **Fallback whole-decision search** (`dkom_decisions`) — ako claim
+       search ne vrati dovoljno hit-ova, ili ako claim_type nije poznat.
+
+    Production Cohere key (paid).
     """
     if item_status == AnalysisItemStatus.OK:
         return []
     if not item_text or not item_text.strip():
         return [dict(_PLACEHOLDER_ZJN)]
     try:
-        # Lazy import: izbjegava circular dependency u testovima
-        from src.knowledge_base import search
+        from src.knowledge_base import search, search_claims
 
-        hits = await search(item_text[:500], limit=3)
-        citations = [_hit_to_citation(h) for h in hits]
+        citations: list[dict[str, Any]] = []
+        query = item_text[:500]
+
+        # 1. Claim-level — preferirano (strukturirano, s verdiktom)
+        claim_hits = await search_claims(
+            query, limit=3, claim_type=claim_type, only_uvazen=False,
+        )
+        citations.extend(_claim_hit_to_citation(h) for h in claim_hits)
+
+        # 2. Ako nedovoljno claim hit-ova, dopuni whole-decision search-om
+        if len(citations) < 3:
+            chunk_hits = await search(query, limit=3 - len(citations))
+            citations.extend(_hit_to_citation(h) for h in chunk_hits)
+
         return citations or [dict(_PLACEHOLDER_ZJN)]
     except Exception:  # noqa: BLE001 — RAG fail ne smije ubiti analizu
         logger.exception("RAG retrieval failed za item, koristim placeholder")
         return [dict(_PLACEHOLDER_ZJN)]
+
+
+def _claim_hit_to_citation(hit: Any) -> dict[str, Any]:
+    """Mapiranje ClaimHit → citation dict.
+
+    Razlika od `_hit_to_citation`: ClaimHit ima strukturirane podatke
+    (argument, obrazloženje, verdikt) — koristimo ih da napravimo bogatiji
+    snippet i citaciju s DKOM kontekstom."""
+    klasa = hit.klasa or ""
+    snippet_parts = []
+    if hit.dkom_obrazlozenje:
+        verdict_marker = (
+            "✓" if hit.dkom_verdict == "uvazen"
+            else "✗" if hit.dkom_verdict == "odbijen"
+            else "≈"
+        )
+        snippet_parts.append(f"{verdict_marker} {hit.dkom_obrazlozenje[:280]}")
+    if hit.argument_zalitelja and len(snippet_parts) < 2:
+        snippet_parts.append(f"Argument: {hit.argument_zalitelja[:200]}")
+    snippet = "\n\n".join(snippet_parts)
+    if len(snippet) > 600:
+        snippet = snippet[:597] + "…"
+
+    # Reference uključuje verdict + datum za jasniji kontekst
+    reference = klasa
+    if hit.datum_odluke:
+        reference = f"{klasa} ({hit.datum_odluke})"
+
+    return {
+        "source": CitationSource.DKOM,
+        "reference": reference,
+        "snippet": snippet,
+        "url": hit.pdf_url,
+        "page": None,
+    }
 
 
 def _hit_to_citation(hit: Any) -> dict[str, Any]:
@@ -222,20 +274,41 @@ async def _enrich_findings_with_citations(
     item_text: str,
 ) -> None:
     """In-place: zamijeni placeholder citate u findings s realnim Qdrant
-    hitsima. Jedan search call po stavci (ne po finding-u) — sve findings
-    iste stavke dobivaju isti citation set."""
-    has_real_finding = any(
-        f.get("status") in ("warn", "fail", "uncertain") and not f.get("is_mock")
-        for f in findings
-    )
-    if not has_real_finding:
-        return
-    real_citations = await _build_citations(AnalysisItemStatus.WARN, item_text)
-    if not real_citations:
-        return
+    hitsima. Per-finding citation set — različita pravila trebaju različite
+    presedane (npr. brand_lock vs kratki_rok).
+
+    Mapping finding.kind → DKOM claim_type za filtrirani search:
+    - brand_lock → brand_lock claims (point-to-point match)
+    - arithmetic, group_sum, recap_ref → no claim_type filter (math greška
+      nije specifična kategorija u DKOM-u)
+    - sve ostalo → no filter (LLM-judge će se dodati kasnije)
+    """
+    # Mapping naša finding.kind → DKOM claim_type (ako postoji semantička
+    # korespondencija). None → fallback bez filtera.
+    KIND_TO_CLAIM_TYPE = {
+        "brand_lock": "brand_lock",
+        # Buduća pravila:
+        # "kratki_rok": "kratki_rok",
+        # "vague_kriterij": "vague_kriterij",
+        # "diskrim_uvjeti": "diskrim_uvjeti",
+        # "neprecizna_spec": "neprecizna_specifikacija",
+    }
+
+    # Cache po claim_type — više finding-a istog tipa dijeli citaciju
+    citation_cache: dict[str | None, list[dict[str, Any]]] = {}
+
     for f in findings:
-        if f.get("status") in ("warn", "fail", "uncertain"):
-            f["citations"] = real_citations
+        if f.get("status") not in ("warn", "fail", "uncertain"):
+            continue
+        if f.get("is_mock"):
+            continue
+        claim_type = KIND_TO_CLAIM_TYPE.get(f.get("kind", ""))
+        if claim_type not in citation_cache:
+            citation_cache[claim_type] = await _build_citations(
+                AnalysisItemStatus.WARN, item_text, claim_type=claim_type,
+            )
+        if citation_cache[claim_type]:
+            f["citations"] = citation_cache[claim_type]
 
 
 def _explanation_for(

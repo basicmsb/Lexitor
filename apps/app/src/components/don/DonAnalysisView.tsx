@@ -453,14 +453,52 @@ function BlockFindings({ findings }: { findings: FindingPublic[] }) {
           {f.citations && f.citations.length > 0 && (
             <>
               <hr className="my-3 border-brand-border" />
-              <ul className="space-y-1 text-[11px] font-mono text-muted">
-                {f.citations.map((c, ci) => (
-                  <li key={ci}>
-                    <span className="text-navy">
-                      {(c.source || "OTHER").toUpperCase()} {c.reference}
-                    </span>
-                  </li>
-                ))}
+              <p className="text-[10px] uppercase tracking-[0.18em] font-semibold text-muted mb-2">
+                Slični presedani
+              </p>
+              <ul className="space-y-3">
+                {f.citations.map((c, ci) => {
+                  const sourceLabel = (c.source || "OTHER").toUpperCase();
+                  const isDkom = sourceLabel === "DKOM";
+                  return (
+                    <li
+                      key={ci}
+                      className="rounded-md border border-brand-border bg-surface-2/40 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${
+                            isDkom
+                              ? "bg-signal/15 text-signal"
+                              : "bg-gold/15 text-gold"
+                          }`}
+                        >
+                          {sourceLabel}
+                        </span>
+                        {c.url ? (
+                          <a
+                            href={c.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-mono text-navy hover:text-signal hover:underline transition truncate"
+                            title="Otvori PDF u novom tabu"
+                          >
+                            {c.reference} ↗
+                          </a>
+                        ) : (
+                          <span className="text-xs font-mono text-navy truncate">
+                            {c.reference}
+                          </span>
+                        )}
+                      </div>
+                      {c.snippet && (
+                        <p className="text-xs text-muted leading-relaxed whitespace-pre-line">
+                          {c.snippet}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}
