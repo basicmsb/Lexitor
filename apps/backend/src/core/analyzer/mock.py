@@ -963,7 +963,13 @@ async def run_mock_analysis(analysis_id: uuid.UUID) -> None:
             return
 
         try:
-            parsed = parse_document(__import__("pathlib").Path(document.storage_path))
+            # Prosljeđujemo originalan filename (npr. "Tehnički opis.pdf") za
+            # auto-detekciju document_subtype-a. storage_path je UUID, pa bez
+            # ovog override-a subtype heuristika ne bi imala podatak za rad.
+            parsed = parse_document(
+                __import__("pathlib").Path(document.storage_path),
+                filename_override=document.filename,
+            )
         except Exception as exc:  # noqa: BLE001 — surface parser errors uniformly
             await _mark_failed(session, analysis, f"Parser greška: {exc}")
             return

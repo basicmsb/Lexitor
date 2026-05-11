@@ -55,7 +55,8 @@ RuleFn = Callable[[ParsedItem], list[Finding]]
 class RuleSpec:
     """Metadata pravila — koristi se za debug, audit, dokumentaciju."""
     name: str
-    applies_to: tuple[str, ...]
+    applies_to: tuple[str, ...]  # item kind (paragraph, requirement, …)
+    applies_to_subtypes: tuple[str, ...] | None  # document subtype (None = sve)
     description: str
     fn: RuleFn
 
@@ -65,14 +66,22 @@ DON_RULES: list[RuleSpec] = []
 
 
 def don_rule(
-    *, name: str, applies_to: Iterable[str], description: str = ""
+    *,
+    name: str,
+    applies_to: Iterable[str],
+    description: str = "",
+    applies_to_subtypes: Iterable[str] | None = None,
 ) -> Callable[[RuleFn], RuleFn]:
     """Decorator: registrira funkciju kao DON rule.
 
     Args:
         name: Jedinstveno ime pravila (npr. "brand_lock").
-        applies_to: Lista item_kind-ova na koje se pravilo primjenjuje.
-            Pravilo se preskače za ostale kindove.
+        applies_to: Lista item_kind-ova na koje se pravilo primjenjuje
+            (paragraph, requirement, criterion, list, table, deadline, ...).
+        applies_to_subtypes: Lista document_subtype vrijednosti na koje se
+            pravilo primjenjuje. None znači "sve" (uključujući unknown).
+            Ako je definirano, item s document_subtype koji nije u listi se
+            preskače. Item BEZ subtype (legacy) uvijek prolazi.
         description: Što pravilo provjerava (za debug/audit).
     """
 
@@ -80,11 +89,17 @@ def don_rule(
         spec = RuleSpec(
             name=name,
             applies_to=tuple(applies_to),
+            applies_to_subtypes=(
+                tuple(applies_to_subtypes) if applies_to_subtypes is not None else None
+            ),
             description=description,
             fn=fn,
         )
         DON_RULES.append(spec)
-        logger.debug("Registered DON rule: %s (applies_to=%s)", name, spec.applies_to)
+        logger.debug(
+            "Registered DON rule: %s (kinds=%s, subtypes=%s)",
+            name, spec.applies_to, spec.applies_to_subtypes,
+        )
         return fn
 
     return decorator
@@ -94,13 +109,26 @@ def run_don_rules(item: ParsedItem) -> list[Finding]:
     """Izvrši sva registrirana DON pravila nad item-om. Vrati spojenu
     listu nalaza (po redu registracije pravila).
 
+    Filter logika:
+    - item_kind mora biti u rule.applies_to (npr. paragraph, requirement, …)
+    - document_subtype, ako postoji u item metadata, mora biti u
+      rule.applies_to_subtypes ako je tamo definirano. Ako rule nema subtype
+      filter, primjenjuje se na sve. Ako item nema subtype (None), pravilo
+      se uvijek primjenjuje (legacy / nepoznato).
+
     Ako pravilo baci exception, log-aj i nastavi — jedan loš rule ne smije
     rušiti cijelu analizu."""
-    item_kind = (item.metadata or {}).get("kind", "")
+    meta = item.metadata or {}
+    item_kind = meta.get("kind", "")
+    item_subtype = meta.get("document_subtype")
     findings: list[Finding] = []
     for spec in DON_RULES:
         if item_kind not in spec.applies_to:
             continue
+        # Subtype filter (samo ako rule deklarira ograničenje I item ima subtype)
+        if spec.applies_to_subtypes is not None and item_subtype is not None:
+            if item_subtype not in spec.applies_to_subtypes:
+                continue
         try:
             result = spec.fn(item)
         except Exception:  # noqa: BLE001
@@ -146,6 +174,13 @@ def _brand_lock_impl(item: ParsedItem) -> list[Finding]:
 don_rule(
     name="brand_lock",
     applies_to=("paragraph", "requirement", "criterion", "list", "table"),
+    applies_to_subtypes=(
+        # Brand mention je realan problem u: tehničke specifikacije,
+        # troškovnik, upute (gdje se opisuje predmet). NE u kriterijima
+        # subjekta/ponude (tu su uvjeti ponuditelja, ne specifikacija predmeta)
+        # NE u općim podacima, prijedlogu ugovora.
+        "tehnicke_specifikacije", "troskovnik", "upute_ponuditeljima", "ostalo",
+    ),
     description=(
         "Specifikacija navodi marku/proizvođača bez klauzule 'ili jednakovrijedno'. "
         "ZJN čl. 207 traži neutralnost tehničke specifikacije."
@@ -350,6 +385,11 @@ def _neprecizna_specifikacija_impl(item: ParsedItem) -> list[Finding]:
 don_rule(
     name="neprecizna_specifikacija",
     applies_to=("paragraph", "requirement", "list", "table"),
+    applies_to_subtypes=(
+        # Neprecizna specifikacija se događa u: tehničke specifikacije,
+        # troškovnik. NE u kriterijima ponuditeljima ili općim podacima.
+        "tehnicke_specifikacije", "troskovnik", "upute_ponuditeljima",
+    ),
     description=(
         "Tehnička specifikacija je preuska i pogoduje jednom proizvođaču. "
         "Detektira: uske tolerancije (±N% za N≤10), specifične norme bez "
@@ -564,6 +604,11 @@ def _kratki_rok_impl(item: ParsedItem) -> list[Finding]:
 don_rule(
     name="kratki_rok",
     applies_to=("paragraph", "requirement", "deadline", "list"),
+    applies_to_subtypes=(
+        # Rok za dostavu ponude se navodi u: opći podaci, upute ponuditeljima.
+        # Ne u tehničkim specifikacijama / troškovniku / kriterijima.
+        "opci_podaci", "upute_ponuditeljima",
+    ),
     description=(
         "Rok za dostavu ponude je prekratak. ZJN čl. 219: minimum 30 dana "
         "otvoreni, 15 dana skraćeni. Detektira eksplicitan broj dana + "
@@ -808,6 +853,14 @@ def _diskrim_uvjeti_impl(item: ParsedItem) -> list[Finding]:
 don_rule(
     name="diskrim_uvjeti",
     applies_to=("paragraph", "requirement", "criterion", "list"),
+    applies_to_subtypes=(
+        # Diskriminatorni uvjeti sposobnosti su STRIKTNO problem KRITERIJA
+        # za odabir ponuditelja. NIJE problem u tehničkim specifikacijama
+        # (tu projektant često navodi 'ovlašteni inženjer elektrotehnike,
+        # Hrvatska komora' kao SVOJU referenciju — to je info o autoru,
+        # ne kriterij za ponuditelje).
+        "kriteriji_subjekta", "kriteriji_ponude", "upute_ponuditeljima",
+    ),
     description=(
         "Uvjeti sposobnosti (financijska, tehnička, stručna) koji neopravdano "
         "isključuju ponuditelje. Multi-signal: godine iskustva, tuzemne komore, "
