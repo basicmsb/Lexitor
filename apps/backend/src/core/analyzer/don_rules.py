@@ -369,10 +369,39 @@ _DEADLINE_DAYS_RE = re.compile(
     re.IGNORECASE,
 )
 
-_DOSTAVA_CONTEXT_RE = re.compile(
-    r"\b(?:dostav|podnoš|preda[jt][ie]|nudit[ie]|ponud[ae])\b",
+# Rečenica MORA sadržavati ovu kombinaciju: "ponud*" + jedna od dostavnih riječi.
+_PONUDA_RE = re.compile(r"\bponud[aeiu]\b", re.IGNORECASE)
+_DOSTAVA_VERB_RE = re.compile(
+    r"\b(?:dostav|podnoš|preda[jt][ie]|primanj|primit)",
     re.IGNORECASE,
 )
+
+# Rečenica NE smije sadržavati ove riječi (rok nije za dostavu ponude nego nešto drugo).
+_NOT_DOSTAVA_ANTI = re.compile(
+    r"\b(?:produžen|produzen|valjanost|valjan\w*\s+(?:ponud|jamst)|"
+    r"garancij|jamstv|potpisivanj|izvedb|izvršen|izvrsen|izvođen|izvodjen|"
+    r"ugovor|isporuk|ispostavlj|otklanjan|popravak|reklamacij|provjer)",
+    re.IGNORECASE,
+)
+
+
+def _find_sentence_around(text: str, position: int) -> str:
+    """Vrati rečenicu (između . ! ? ili newline) koja sadrži zadanu poziciju."""
+    # Granice prema natrag
+    start = position
+    while start > 0:
+        ch = text[start - 1]
+        if ch in ".!?\n":
+            break
+        start -= 1
+    # Granice prema naprijed
+    end = position
+    while end < len(text):
+        ch = text[end]
+        if ch in ".!?\n":
+            break
+        end += 1
+    return text[start:end]
 
 _SHORT_DEADLINE_TERMS = (
     "kratko vrijem",
@@ -435,17 +464,27 @@ def _kratki_rok_impl(item: ParsedItem) -> list[Finding]:
 
     signals: list[tuple[str, str]] = []  # (signal_type, detail)
 
-    # 1. Eksplicitan kratki rok (broj dana)
+    # 1. Eksplicitan kratki rok (broj dana) — strogi rečenični kontekst
+    # Pravilo se aktivira SAMO ako rečenica oko match-a:
+    # - sadrži "ponuda" (any form)
+    # - sadrži dostavni glagol ("dostav", "podnoš", "preda*", "primanj")
+    # - NE sadrži anti-riječi ("produžen", "valjanost", "garancij", "ugovor"
+    #   "izvedb", "potpisivanj" — to su rokovi za druge stvari, ne ponudu)
     explicit_short_days: int | None = None
     for m in _DEADLINE_DAYS_RE.finditer(text):
         try:
             days = int(m.group(1))
         except ValueError:
             continue
-        # Provjeri kontekst: blizak referenciji "dostav*", "podnoš*", "ponud*"
-        match_start = m.start()
-        context_window = text[max(0, match_start - 100):match_start + 100]
-        if not _DOSTAVA_CONTEXT_RE.search(context_window):
+        # Pronađi rečenicu koja sadrži match
+        sentence = _find_sentence_around(text, m.start())
+        # Mora biti o dostavi ponude
+        if not _PONUDA_RE.search(sentence):
+            continue
+        if not _DOSTAVA_VERB_RE.search(sentence):
+            continue
+        # Ne smije biti o produženju/valjanosti/garanciji/ugovoru/izvedbi
+        if _NOT_DOSTAVA_ANTI.search(sentence):
             continue
         if days < 15:
             signals.append((
